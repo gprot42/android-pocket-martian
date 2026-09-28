@@ -1,11 +1,16 @@
 package com.tinyggrok.app.data.auth
 
 import android.util.Log
+import com.tinyggrok.app.data.repository.causeChain
+import com.tinyggrok.app.data.repository.dnsFailureMessage
 import kotlinx.coroutines.delay
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONObject
+import java.io.IOException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,12 +25,16 @@ import javax.inject.Singleton
  * gate usage separately from SuperGrok Heavy consumer chat.
  */
 @Singleton
-class XaiOAuthClient @Inject constructor() {
+class XaiOAuthClient @Inject constructor(
+    baseClient: OkHttpClient
+) {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+    // App DNS includes DNS-over-HTTPS. Shorter timeouts than the chat client.
+    private val client = baseClient.newBuilder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
     data class DeviceCodeResponse(
@@ -63,7 +72,7 @@ class XaiOAuthClient @Inject constructor() {
             .post(body)
             .header("Accept", "application/json")
             .build()
-        client.newCall(request).execute().use { response ->
+        execute(request).use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IllegalStateException(
@@ -100,7 +109,7 @@ class XaiOAuthClient @Inject constructor() {
             .header("Accept", "application/json")
             .build()
         return try {
-            client.newCall(request).execute().use { response ->
+            execute(request).use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (response.isSuccessful) {
                     return PollResult.Success(parseTokenResponse(raw))
@@ -168,7 +177,7 @@ class XaiOAuthClient @Inject constructor() {
             .post(body)
             .header("Accept", "application/json")
             .build()
-        client.newCall(request).execute().use { response ->
+        execute(request).use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw IllegalStateException(
@@ -176,6 +185,18 @@ class XaiOAuthClient @Inject constructor() {
                 )
             }
             return parseTokenResponse(raw)
+        }
+    }
+
+    private fun execute(request: Request): Response {
+        return try {
+            client.newCall(request).execute()
+        } catch (e: IOException) {
+            if (e.causeChain().any { it is UnknownHostException }) {
+                Log.w(TAG, "DNS failed for auth.x.ai: ${e.message}")
+                throw IllegalStateException(dnsFailureMessage("auth.x.ai"), e)
+            }
+            throw e
         }
     }
 

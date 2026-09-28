@@ -1,5 +1,12 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.tinyggrok.app.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,52 +25,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.filled.AttachMoney
-import androidx.compose.material.icons.filled.BugReport
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Login
-import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.VpnKey
-import com.tinyggrok.app.AppDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,7 +51,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,36 +61,35 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tinyggrok.app.data.local.SettingsRepository
-import com.tinyggrok.app.data.repository.AuthMode
-import com.tinyggrok.app.ui.theme.AppTheme
-import com.tinyggrok.app.ui.viewmodel.ApiKeyCheckUi
 import com.tinyggrok.app.ui.viewmodel.SettingsViewModel
 import com.tinyggrok.app.ui.viewmodel.UpdateViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToUsage: () -> Unit = {},
+    initialSection: String? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
     updateViewModel: UpdateViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val update by updateViewModel.state.collectAsState()
-    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val homeScroll = rememberScrollState()
+
+    val root = remember(initialSection) { SettingsDestination.fromSection(initialSection) }
+    var page by rememberSaveable { mutableStateOf(root) }
 
     fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(
@@ -136,6 +111,27 @@ fun SettingsScreen(
                 result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
 
+    BackHandler(enabled = page != root) { page = root }
+
+    LaunchedEffect(page) {
+        if (page == SettingsDestination.Location) {
+            locationPermissionGranted = hasLocationPermission()
+        }
+    }
+
+    var openedVerificationUri by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(uiState.oauthVerificationUri, uiState.oauthLoginInProgress) {
+        val verifyUri = uiState.oauthVerificationUri
+        if (
+            uiState.oauthLoginInProgress &&
+            !verifyUri.isNullOrBlank() &&
+            openedVerificationUri != verifyUri
+        ) {
+            openedVerificationUri = verifyUri
+            runCatching { uriHandler.openUri(verifyUri) }
+        }
+    }
+
     uiState.previewError?.let { err ->
         LaunchedEffect(err) {
             snackbarHostState.showSnackbar(err)
@@ -143,22 +139,21 @@ fun SettingsScreen(
         }
     }
 
+    fun leaveSettings() {
+        if (page != root) page = root else onNavigateBack()
+    }
+
     Scaffold(
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(page.title) },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = ::leaveSettings) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
                         )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToAbout) {
-                        Icon(Icons.Default.Info, contentDescription = "About")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -167,804 +162,53 @@ fun SettingsScreen(
             )
         }
     ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-
-            // ── Appearance ───────────────────────────────────────────────────
-            SettingsSection(title = "Appearance", icon = Icons.Default.Palette) {
-                SectionLabel("Theme")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf(
-                        "Light" to AppTheme.LIGHT,
-                        "Dark" to AppTheme.DARK,
-                        "Tokyo Night" to AppTheme.TOKYO_NIGHT
-                    ).forEachIndexed { index, (label, theme) ->
-                        SegmentedButton(
-                            selected = uiState.theme == theme,
-                            onClick = { viewModel.updateTheme(theme) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = 3)
-                        ) { Text(label, maxLines = 1) }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                FontSizeSlider(
-                    value = uiState.fontSize,
-                    onValueChange = viewModel::updateFontSize
-                )
-            }
-
-            // ── Chat ─────────────────────────────────────────────────────────
-            SettingsSection(title = "Chat", icon = Icons.Default.TextFields) {
-                SectionLabel("Grok model")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    AppDefaults.CHAT_MODELS.forEachIndexed { index, (label, id) ->
-                        SegmentedButton(
-                            selected = uiState.chatModel == id,
-                            onClick = { viewModel.updateChatModel(id) },
-                            shape = SegmentedButtonDefaults.itemShape(
-                                index = index,
-                                count = AppDefaults.CHAT_MODELS.size
-                            )
-                        ) { Text(label, maxLines = 1) }
-                    }
-                }
-                Text(
-                    "Grok 4.7 by default, xAI's most capable model. 4.6 is the backup if " +
-                        "your choice is unavailable. (4.7 Fast is not on the public API.)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(Modifier.height(12.dp))
-                SectionLabel("Response format")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf("HTML" to "html", "Markdown" to "markdown")
-                        .forEachIndexed { index, (label, value) ->
-                            SegmentedButton(
-                                selected = uiState.responseFormat == value,
-                                onClick = { viewModel.updateResponseFormat(value) },
-                                shape = SegmentedButtonDefaults.itemShape(index = index, count = 2)
-                            ) { Text(label) }
-                        }
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-
-                SettingsToggleRow(
-                    title = "Show cost per query",
-                    subtitle = "Display token cost below each response",
-                    icon = Icons.Default.AttachMoney,
-                    checked = uiState.showCost,
-                    onCheckedChange = viewModel::updateShowCost
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                SettingsToggleRow(
-                    title = "Debug mode",
-                    subtitle = "Log all API requests and responses",
-                    icon = Icons.Default.BugReport,
-                    checked = uiState.debugMode,
-                    onCheckedChange = viewModel::updateDebugMode
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                val locationSubtitle = when {
-                    !uiState.locationEnabled ->
-                        "Off — answers won't use your location"
-                    locationPermissionGranted ->
-                        "On — approximate location used for local / transit answers"
-                    else ->
-                        "On — location permission needed (tap switch again or grant in system settings)"
-                }
-                SettingsToggleRow(
-                    title = "Use GPS location",
-                    subtitle = locationSubtitle,
-                    icon = Icons.Default.LocationOn,
-                    checked = uiState.locationEnabled,
-                    onCheckedChange = { enabled ->
-                        viewModel.updateLocationEnabled(enabled)
-                        if (enabled && !hasLocationPermission()) {
-                            locationPermissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
+        val pageModifier = Modifier
+            .fillMaxSize()
+            .padding(innerPadding)
+        when (page) {
+            SettingsDestination.Home -> SettingsHome(
+                uiState = uiState,
+                update = update,
+                onOpen = { page = it },
+                onOpenUsage = onNavigateToUsage,
+                onOpenAbout = onNavigateToAbout,
+                onDebugChange = viewModel::updateDebugMode,
+                scrollState = homeScroll,
+                modifier = pageModifier
+            )
+            else -> SettingsPage(pageModifier) {
+                when (page) {
+                    SettingsDestination.Account -> AccountSettings(uiState, viewModel)
+                    SettingsDestination.Chat -> ChatSettings(uiState, viewModel)
+                    SettingsDestination.Voice -> VoiceSettings(uiState, viewModel)
+                    SettingsDestination.Location -> LocationSettings(
+                        uiState = uiState,
+                        locationPermissionGranted = locationPermissionGranted,
+                        onLocationEnabledChange = { enabled ->
+                            viewModel.updateLocationEnabled(enabled)
+                            if (enabled && !hasLocationPermission()) {
+                                locationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
                                 )
-                            )
-                        } else {
-                            locationPermissionGranted = hasLocationPermission()
-                        }
-                    }
-                )
-
-                if (uiState.locationEnabled) {
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-                    GpsCacheTimeoutPicker(
-                        minutes = uiState.locationCacheTimeoutMinutes,
-                        onMinutesChange = viewModel::updateLocationCacheTimeoutMinutes
-                    )
-                }
-            }
-
-            // ── Voice Translator ─────────────────────────────────────────────
-            SettingsSection(title = "Voice Translator", icon = Icons.Default.Mic) {
-                SettingsToggleRow(
-                    title = "Enable Voice Translator",
-                    subtitle = "Real-time translation via Grok Voice API · \$0.05 / min",
-                    icon = Icons.Default.RecordVoiceOver,
-                    checked = uiState.voiceEnabled,
-                    onCheckedChange = viewModel::updateVoiceEnabled
-                )
-
-                if (uiState.voiceEnabled) {
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-
-                    // ── Speaking voice ───────────────────────────────────────
-                    Text(
-                        "Speaking Voice",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    VoicePicker(
-                        selected = uiState.voiceOption,
-                        previewingVoice = uiState.previewingVoice,
-                        onSelect = viewModel::updateVoiceOption,
-                        onPreview = viewModel::previewVoice
-                    )
-
-                    Spacer(Modifier.height(14.dp))
-
-                    // ── Personality mode ─────────────────────────────────────
-                    Text(
-                        "Personality Mode",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    PersonalityPicker(
-                        selected = uiState.personalityMode,
-                        previewingPersonality = uiState.previewingPersonality,
-                        onSelect = viewModel::updatePersonalityMode,
-                        onPreview = viewModel::previewPersonality
-                    )
-
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-
-                    // ── Microphone sensitivity ───────────────────────────────
-                    // Five named levels, each with a bar-count for the signal visualisation
-                    val micTileData = listOf(
-                        Triple("Max",  0.10f, 5),
-                        Triple("High", 0.30f, 4),
-                        Triple("Mid",  0.50f, 3),
-                        Triple("Low",  0.70f, 2),
-                        Triple("Min",  0.90f, 1)
-                    )
-                    val micTileDescs = listOf(
-                        "Picks up whispers",
-                        "Quiet speech",
-                        "Balanced",
-                        "Loud speech only",
-                        "Filters noise"
-                    )
-                    val micTileBarHeights = listOf(8, 11, 16, 20, 24) // dp, short → tall
-                    val selMicIdx = micTileData
-                        .indexOfFirst { abs(it.second - uiState.vadThreshold) < 0.06f }
-                        .coerceAtLeast(0)
-
-                    // Section label row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Microphone Sensitivity",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            micTileDescs[selMicIdx],
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Spacer(Modifier.height(10.dp))
-
-                    // Custom signal-bar tile row — no standard slider or segmented buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        micTileData.forEachIndexed { idx, (label, value, activeBars) ->
-                            val isSel = idx == selMicIdx
-                            val tileBg = if (isSel)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                            val activeBarColor = if (isSel)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-                            val inactiveBarColor = activeBarColor.copy(alpha = 0.12f)
-                            val labelColor = if (isSel)
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            else
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(tileBg)
-                                    .clickable { viewModel.updateVadThreshold(value) }
-                                    .padding(vertical = 10.dp, horizontal = 2.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    // Audio-level bars — bottom-anchored, short→tall left→right
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                        verticalAlignment = Alignment.Bottom,
-                                        modifier = Modifier.height(26.dp)
-                                    ) {
-                                        micTileBarHeights.forEachIndexed { barIdx, h ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(4.dp)
-                                                    .height(h.dp)
-                                                    .clip(
-                                                        RoundedCornerShape(
-                                                            topStart = 2.dp,
-                                                            topEnd = 2.dp,
-                                                            bottomStart = 1.dp,
-                                                            bottomEnd = 1.dp
-                                                        )
-                                                    )
-                                                    .background(
-                                                        if (barIdx < activeBars) activeBarColor
-                                                        else inactiveBarColor
-                                                    )
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = labelColor,
-                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                }
+                            } else {
+                                locationPermissionGranted = hasLocationPermission()
                             }
-                        }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            "← more sensitive",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                        Text(
-                            "less sensitive →",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                    }
-                }
-            }
-
-            // ── Auth (API key / SuperGrok OAuth experimental) ────────────────
-            SettingsSection(title = "Authentication", icon = Icons.Default.VpnKey) {
-                val showKey = remember { mutableStateOf(false) }
-                val checkingKey = uiState.apiKeyCheck is ApiKeyCheckUi.Checking
-                val uriHandler = LocalUriHandler.current
-
-                Text(
-                    text = "Choose how Tiny Grok authenticates to api.x.ai. " +
-                        "SuperGrok OAuth is experimental — it may use subscription quota " +
-                        "or still hit API prepaid limits depending on xAI.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-
-                SectionLabel("Mode")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    listOf(
-                        "API key" to AuthMode.API_KEY,
-                        "SuperGrok" to AuthMode.SUPERGROK_OAUTH
-                    ).forEachIndexed { index, (label, mode) ->
-                        SegmentedButton(
-                            selected = uiState.authMode == mode,
-                            onClick = { viewModel.updateAuthMode(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
-                            enabled = !uiState.oauthLoginInProgress
-                        ) { Text(label, maxLines = 1) }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(12.dp))
-
-                // SuperGrok OAuth block
-                Text(
-                    "SuperGrok sign-in (experimental)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Device-code login via auth.x.ai (same OIDC family as Grok Build). " +
-                        "Not an official Tiny Grok entitlement — no Heavy guarantee.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-
-                if (uiState.oauthSignedIn) {
-                    Text(
-                        text = "Signed in" +
-                            (uiState.oauthEmail?.let { " · $it" } ?: ""),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
+                        },
+                        onCacheTimeoutChange = viewModel::updateLocationCacheTimeoutMinutes
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = viewModel::signOutSuperGrok,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                Icons.Default.Logout,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Sign out")
-                        }
-                        if (uiState.authMode == AuthMode.SUPERGROK_OAUTH) {
-                            OutlinedButton(
-                                onClick = viewModel::checkApiKey,
-                                modifier = Modifier.weight(1f),
-                                enabled = !checkingKey
-                            ) {
-                                if (checkingKey) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.Default.VerifiedUser,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (checkingKey) "Checking…" else "Check")
-                            }
-                        }
-                    }
-                } else if (uiState.oauthLoginInProgress) {
-                    val verifyUri = uiState.oauthVerificationUri
-                    // Open verification page once when the device code arrives.
-                    LaunchedEffect(verifyUri) {
-                        if (!verifyUri.isNullOrBlank()) {
-                            runCatching { uriHandler.openUri(verifyUri) }
-                        }
-                    }
-                    uiState.oauthUserCode?.let { code ->
-                        Text(
-                            text = code,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 2.sp
-                        )
-                        Spacer(Modifier.height(6.dp))
-                    }
-                    uiState.oauthLoginMessage?.let { msg ->
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                if (!verifyUri.isNullOrBlank()) {
-                                    runCatching { uriHandler.openUri(verifyUri) }
-                                        .onFailure {
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, Uri.parse(verifyUri))
-                                            )
-                                        }
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !verifyUri.isNullOrBlank()
-                        ) {
-                            Icon(
-                                Icons.Default.OpenInBrowser,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Open browser")
-                        }
-                        OutlinedButton(
-                            onClick = viewModel::cancelSuperGrokLogin,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Cancel")
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = viewModel::startSuperGrokLogin,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            Icons.Default.Login,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Sign in with SuperGrok")
-                    }
-                    uiState.oauthLoginMessage?.let { msg ->
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-
-                // API key check result also shown for SuperGrok check
-                if (uiState.authMode == AuthMode.SUPERGROK_OAUTH) {
-                    when (val check = uiState.apiKeyCheck) {
-                        is ApiKeyCheckUi.Success -> {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = check.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        is ApiKeyCheckUi.Failure -> {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = check.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        else -> Unit
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(12.dp))
-
-                Text(
-                    "xAI API key",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Used when mode is API key. Create keys at console.x.ai (prepaid credits).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-
-                OutlinedTextField(
-                    value = uiState.apiKey,
-                    onValueChange = viewModel::updateApiKey,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("xAI API key") },
-                    singleLine = true,
-                    enabled = !checkingKey,
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.VpnKey,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    visualTransformation = if (showKey.value)
-                        VisualTransformation.None
-                    else
-                        PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showKey.value = !showKey.value }) {
-                            Icon(
-                                imageVector = if (showKey.value) Icons.Default.VisibilityOff
-                                              else Icons.Default.Visibility,
-                                contentDescription = if (showKey.value) "Hide key" else "Show key"
-                            )
-                        }
-                    }
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = viewModel::saveApiKey,
-                        modifier = Modifier.weight(1f),
-                        enabled = !checkingKey
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Save")
-                    }
-                    OutlinedButton(
-                        onClick = viewModel::checkApiKey,
-                        modifier = Modifier.weight(1f),
-                        enabled = !checkingKey && uiState.apiKey.isNotBlank()
-                    ) {
-                        if (checkingKey) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.VerifiedUser,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (checkingKey) "Checking…" else "Check")
-                    }
-                    OutlinedButton(
-                        onClick = viewModel::clearApiKey,
-                        modifier = Modifier.weight(1f),
-                        enabled = !checkingKey
-                    ) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Clear")
-                    }
-                }
-
-                when (val check = uiState.apiKeyCheck) {
-                    is ApiKeyCheckUi.Success -> {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = check.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    is ApiKeyCheckUi.Failure -> {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = check.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    else -> Unit
-                }
-
-                uiState.savedMessage?.let { msg ->
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = msg,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                    SettingsDestination.Appearance -> AppearanceSettings(uiState, viewModel)
+                    SettingsDestination.Management -> ManagementSettings(
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        onOpenUsage = onNavigateToUsage
                     )
+                    SettingsDestination.Updates -> UpdatesSettings(update, updateViewModel)
+                    SettingsDestination.Home -> Unit
                 }
             }
-
-            // ── Management key (credits / usage) ─────────────────────────────
-            SettingsSection(title = "API credits / Management", icon = Icons.Default.AttachMoney) {
-                Text(
-                    "Optional. Used only by Credits & usage to load prepaid balance and rate quotas. " +
-                        "Create a key at console.x.ai → Settings → Management Keys " +
-                        "(not the same as your chat API key).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-
-                val showMgmtKey = remember { mutableStateOf(false) }
-                OutlinedTextField(
-                    value = uiState.managementKey,
-                    onValueChange = viewModel::updateManagementKey,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Management key") },
-                    singleLine = true,
-                    visualTransformation = if (showMgmtKey.value)
-                        VisualTransformation.None
-                    else
-                        PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showMgmtKey.value = !showMgmtKey.value }) {
-                            Icon(
-                                imageVector = if (showMgmtKey.value) Icons.Default.VisibilityOff
-                                else Icons.Default.Visibility,
-                                contentDescription = if (showMgmtKey.value) "Hide key" else "Show key"
-                            )
-                        }
-                    }
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = uiState.teamId,
-                    onValueChange = viewModel::updateTeamId,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Team ID (optional)") },
-                    singleLine = true,
-                    supportingText = {
-                        Text("Leave blank to auto-detect from the management key.")
-                    }
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = viewModel::saveManagementCredentials,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Save")
-                    }
-                    OutlinedButton(
-                        onClick = viewModel::clearManagementCredentials,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Clear")
-                    }
-                }
-            }
-
-            // ── Credits & About ──────────────────────────────────────────────
-            OutlinedButton(
-                onClick = onNavigateToUsage,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    Icons.Default.AttachMoney,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Credits & usage")
-            }
-
-            // ── App updates ──────────────────────────────────────────────────
-            SettingsSection(title = "App updates", icon = Icons.Default.SystemUpdate) {
-                Text(
-                    "Version ${update.currentVersion}. New builds are published as GitHub releases.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SettingsToggleRow(
-                    title = "Check for updates",
-                    subtitle = "Look for a newer release when the app opens, once a day",
-                    icon = Icons.Default.SystemUpdate,
-                    checked = update.autoCheck,
-                    onCheckedChange = updateViewModel::setAutoCheck
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = updateViewModel::checkNow,
-                        enabled = !update.checking && update.downloadProgress == null
-                    ) {
-                        Text(if (update.checking) "Checking…" else "Check now")
-                    }
-                    update.available?.let { available ->
-                        Button(
-                            onClick = updateViewModel::downloadAndInstall,
-                            enabled = update.downloadProgress == null
-                        ) { Text("Install ${available.versionName}") }
-                    }
-                }
-                update.downloadProgress?.let { progress ->
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                    )
-                }
-                update.message?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                }
-            }
-
-            OutlinedButton(
-                onClick = onNavigateToAbout,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("About Tiny Ggrok")
-            }
-
-            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -974,9 +218,10 @@ fun SettingsScreen(
 // ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SettingsSection(
+internal fun SettingsSection(
     title: String,
     icon: ImageVector,
+    showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     ElevatedCard(
@@ -987,31 +232,33 @@ private fun SettingsSection(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center
+            if (showHeader) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(18.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
             }
             content()
         }
@@ -1019,7 +266,7 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,
@@ -1029,7 +276,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -1095,7 +342,7 @@ private inline fun Box(
  * Presets: 10m, 15m, 30m, 1h, 2h, or Custom (enter minutes). Default 10m.
  */
 @Composable
-private fun GpsCacheTimeoutPicker(
+internal fun GpsCacheTimeoutPicker(
     minutes: Int,
     onMinutesChange: (Int) -> Unit
 ) {
@@ -1247,7 +494,7 @@ private fun GpsCacheTimeoutPicker(
     }
 }
 
-private fun formatCacheTimeoutLabel(minutes: Int): String = when {
+internal fun formatCacheTimeoutLabel(minutes: Int): String = when {
     minutes < 60 -> if (minutes == 1) "1 minute" else "$minutes minutes"
     minutes % 60 == 0 -> {
         val h = minutes / 60
@@ -1276,7 +523,7 @@ private fun formatCacheTimeoutLabel(minutes: Int): String = when {
  * Range 10–24 sp is mapped to 5 discrete steps:  10, 13, 16, 20, 24 sp.
  */
 @Composable
-private fun FontSizeSlider(
+internal fun FontSizeSlider(
     value: Float,
     onValueChange: (Float) -> Unit
 ) {
@@ -1388,7 +635,7 @@ private fun FontSizeSlider(
 // ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun VoicePicker(
+internal fun VoicePicker(
     selected: com.tinyggrok.app.data.model.VoiceOption,
     previewingVoice: com.tinyggrok.app.data.model.VoiceOption?,
     onSelect: (com.tinyggrok.app.data.model.VoiceOption) -> Unit,
@@ -1486,7 +733,7 @@ private fun VoicePicker(
 // ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PersonalityPicker(
+internal fun PersonalityPicker(
     selected: com.tinyggrok.app.data.model.PersonalityMode,
     previewingPersonality: com.tinyggrok.app.data.model.PersonalityMode?,
     onSelect: (com.tinyggrok.app.data.model.PersonalityMode) -> Unit,
