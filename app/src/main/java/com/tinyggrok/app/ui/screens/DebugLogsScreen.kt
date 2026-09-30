@@ -71,7 +71,7 @@ fun DebugLogsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "Debug Logs",
+                        "Logs",
                         style = MaterialTheme.typography.titleMedium
                     )
                 },
@@ -101,7 +101,8 @@ fun DebugLogsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "No debug logs yet.\nEnable Debug Mode in Settings, then send a query or start a Voice session.",
+                    "Nothing logged yet.\nEach prompt you send adds a line saying how long it took. " +
+                        "Turn on Debug mode in Settings to log full API requests and responses too.",
                     color = MaterialTheme.colorScheme.outline,
                     style = MaterialTheme.typography.bodyMedium
                 )

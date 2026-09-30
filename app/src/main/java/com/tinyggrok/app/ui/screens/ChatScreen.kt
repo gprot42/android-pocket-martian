@@ -142,7 +142,6 @@ fun ChatScreen(
     onNavigateToDebugLogs: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToVoiceTranslator: () -> Unit = {},
-    onNavigateToUsage: () -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
     updateViewModel: UpdateViewModel = hiltViewModel()
 ) {
@@ -424,9 +423,6 @@ fun ChatScreen(
                     }
                     TextButton(onClick = onNavigateToVoiceTranslator) {
                         Text("Voice")
-                    }
-                    TextButton(onClick = onNavigateToUsage) {
-                        Text("Credits")
                     }
                     if (uiState.debugMode) {
                         TextButton(onClick = onNavigateToDebugLogs) {

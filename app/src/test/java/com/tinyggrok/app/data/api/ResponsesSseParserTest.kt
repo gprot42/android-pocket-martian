@@ -133,4 +133,40 @@ class ResponsesSseParserTest {
         assertTrue(parsed.usedWebSearch)
         assertEquals("done", parsed.completed?.output?.last()?.content?.first()?.text)
     }
+
+    @Test
+    fun searchesAreCountedOnceEachAndEveryEventIsReported() {
+        // One web search arrives as several events; the timing log must count it once.
+        val sse = """
+            data: {"type":"response.created"}
+
+            data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws_1"}}
+
+            data: {"type":"response.web_search_call.in_progress","item_id":"ws_1"}
+
+            data: {"type":"response.web_search_call.completed","item_id":"ws_1"}
+
+            data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1"}}
+
+            data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws_2"}}
+
+            data: {"type":"response.output_text.delta","delta":"Hi"}
+
+            data: {"type":"response.completed","response":{"output_text":"Hi","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":40}}}}
+
+        """.trimIndent()
+        var calls = 0
+        val types = mutableListOf<String>()
+        val listener = object : ResponsesStreamListener {
+            override fun onSearchCall() { calls++ }
+            override fun onEvent(type: String) { types += type }
+        }
+        val parsed = ResponsesSseParser(listener = listener).parse(StringReader(sse))
+        assertEquals(2, calls)
+        assertEquals("response.created", types.first())
+        assertEquals(8, types.size)
+        // Cached and reasoning tokens come through for the timing line.
+        assertEquals(4, parsed.completed?.usage?.inputDetails?.cachedTokens)
+        assertEquals(40, parsed.completed?.usage?.outputDetails?.reasoningTokens)
+    }
 }

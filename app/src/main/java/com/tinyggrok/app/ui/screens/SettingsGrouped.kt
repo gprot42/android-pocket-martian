@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
@@ -114,6 +115,7 @@ internal fun SettingsHome(
     onOpen: (SettingsDestination) -> Unit,
     onOpenUsage: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenLogs: () -> Unit,
     onDebugChange: (Boolean) -> Unit,
     scrollState: ScrollState,
     modifier: Modifier = Modifier
@@ -192,9 +194,20 @@ internal fun SettingsHome(
                 onClick = onOpenAbout
             )
             SettingsInsetDivider()
+            SettingsNavRow(
+                title = "Logs",
+                subtitle = if (uiState.debugMode) {
+                    "How long each prompt took, and API traffic"
+                } else {
+                    "How long each prompt took"
+                },
+                icon = Icons.Default.Timer,
+                onClick = onOpenLogs
+            )
+            SettingsInsetDivider()
             SettingsSwitchRow(
                 title = "Debug mode",
-                subtitle = "Log API requests and responses",
+                subtitle = "Also log full API requests and responses",
                 icon = Icons.Default.BugReport,
                 checked = uiState.debugMode,
                 onCheckedChange = onDebugChange

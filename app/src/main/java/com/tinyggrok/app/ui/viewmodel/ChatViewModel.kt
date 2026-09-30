@@ -18,7 +18,10 @@ import com.tinyggrok.app.data.repository.DebugLogRepository
 import com.tinyggrok.app.data.repository.ResolvedAuth
 import com.tinyggrok.app.data.local.ChatTranscriptStore
 import com.tinyggrok.app.data.local.StoredMessage
+import com.tinyggrok.app.data.repository.RequestTimingLog
 import com.tinyggrok.app.data.repository.ResponseHistoryRepository
+import com.tinyggrok.app.data.repository.SendTiming
+import com.tinyggrok.app.data.repository.wantsFreshLocation
 import com.tinyggrok.app.data.repository.SuperGrokAuthRepository
 import com.tinyggrok.app.data.share.IncomingShare
 import com.tinyggrok.app.data.share.IncomingShareRepository
@@ -232,6 +235,7 @@ class ChatViewModel @Inject constructor(
     private val debugLogRepository: DebugLogRepository,
     private val responseHistoryRepository: ResponseHistoryRepository,
     private val transcriptStore: ChatTranscriptStore,
+    private val requestTimingLog: RequestTimingLog,
     private val incomingShareRepository: IncomingShareRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -483,21 +487,44 @@ class ChatViewModel @Inject constructor(
         }
 
         sendJob = viewModelScope.launch {
-            // Kick off the (possibly slow) GPS lookup immediately so it overlaps with
-            // auth resolution and settings reads instead of running after them.
+            val timing = SendTiming()
+            var timingRecorded = false
+            coroutineContext[Job]?.invokeOnCompletion { cause ->
+                if (cause != null && !timingRecorded) requestTimingLog.record(timing.summary("stopped"))
+            }
+            // Only a prompt whose answer depends on where the phone is waits for a GPS
+            // fix; anything else goes at once with whatever location is already known.
+            // Every prompt used to wait up to three seconds for satellites whenever the
+            // last fix was over ten minutes old, indoors usually in vain.
+            val freshLocation = wantsFreshLocation(prompt)
+            // Kick off the lookup immediately so it overlaps with auth and settings reads.
             val locationDeferred = async {
                 if (settingsRepository.locationEnabled.first()) {
                     runCatching {
                         locationRepository
-                            .getApproximateLocation(waitTimeoutMs = SEND_LOCATION_WAIT_MS)
+                            .getApproximateLocation(
+                                waitTimeoutMs = SEND_LOCATION_WAIT_MS,
+                                allowFreshFix = freshLocation
+                            )
                             ?.toInstructionSnippet()
                     }.getOrNull()
                 } else {
                     null
+                }.also {
+                    timing.mark(SendTiming.Mark.LOCATION)
+                    timing.note(
+                        "location",
+                        when {
+                            it == null -> "none"
+                            freshLocation -> "(could wait for GPS)"
+                            else -> "(known only)"
+                        }
+                    )
                 }
             }
 
             val auth = superGrokAuthRepository.resolveAuth()
+            timing.mark(SendTiming.Mark.AUTH)
             val apiKey = when (auth) {
                 is ResolvedAuth.Ok -> auth.bearerToken
                 is ResolvedAuth.Missing -> {
@@ -578,8 +605,10 @@ class ChatViewModel @Inject constructor(
                             }
                         }
                     }
-                }
+                },
+                timing = timing
             )
+            timing.mark(SendTiming.Mark.DONE)
             _uiState.value = result.fold(
                 onSuccess = { response ->
                     val costInfo = response.usage?.let { usage ->
@@ -622,6 +651,15 @@ class ChatViewModel @Inject constructor(
             )
 
             rememberConversation()
+            requestTimingLog.record(
+                timing.summary(
+                    result.fold(
+                        onSuccess = { "ok, ${"%,d".format(it.assistantMessage.length)} chars" },
+                        onFailure = { "error: ${it.message.orEmpty().lineSequence().first().take(120)}" }
+                    )
+                )
+            )
+            timingRecorded = true
 
             if (result.isSuccess) {
                 sendQueuedPrompt()

@@ -13,6 +13,8 @@ import javax.inject.Singleton
 /** Cap the in-memory ring so debug logs cannot grow into gigabytes of RSS. */
 internal const val MAX_DEBUG_LOG_ENTRIES = 200
 
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
 data class DebugLogEntry(
     val id: Long,
     val timestamp: String,
@@ -28,6 +30,7 @@ class DebugLogRepository @Inject constructor() {
     val logs: StateFlow<List<DebugLogEntry>> = _logs.asStateFlow()
 
     private val formatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    private val olderFormatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
     private val nextId = AtomicLong(0)
 
     fun logOutgoing(summary: String, body: String) {
@@ -36,6 +39,11 @@ class DebugLogRepository @Inject constructor() {
 
     fun logIncoming(summary: String, body: String) {
         append("← IN", summary, body)
+    }
+
+    /** How long a prompt took; see RequestTimingLog. Always written, Debug mode or not. */
+    fun logTiming(summary: String, atMillis: Long = System.currentTimeMillis()) {
+        append("⏱ TIME", summary, "", atMillis)
     }
 
     /** Voice-specific log entry — always written regardless of chat debug mode. */
@@ -47,21 +55,33 @@ class DebugLogRepository @Inject constructor() {
         _logs.value = emptyList()
     }
 
-    private fun append(direction: String, summary: String, body: String) {
-        val now = System.currentTimeMillis()
+    private fun append(
+        direction: String,
+        summary: String,
+        body: String,
+        now: Long = System.currentTimeMillis()
+    ) {
         val entry = DebugLogEntry(
             id = nextId.incrementAndGet(),
-            timestamp = formatter.format(Date(now)),
+            timestamp = if (now / DAY_MS == System.currentTimeMillis() / DAY_MS) {
+                formatter.format(Date(now))
+            } else {
+                olderFormatter.format(Date(now))
+            },
             timestampMillis = now,
             direction = direction,
             summary = summary,
             body = sanitizeLogBody(body)
         )
-        val current = _logs.value
-        _logs.value = if (current.size >= MAX_DEBUG_LOG_ENTRIES) {
-            current.drop(current.size - (MAX_DEBUG_LOG_ENTRIES - 1)) + entry
-        } else {
-            current + entry
+        synchronized(this) {
+            // Kept in time order: timings from earlier runs are added with their own times.
+            val current = _logs.value
+            val merged = if (current.isEmpty() || current.last().timestampMillis <= now) {
+                current + entry
+            } else {
+                (current + entry).sortedBy { it.timestampMillis }
+            }
+            _logs.value = if (merged.size > MAX_DEBUG_LOG_ENTRIES) merged.takeLast(MAX_DEBUG_LOG_ENTRIES) else merged
         }
     }
 }

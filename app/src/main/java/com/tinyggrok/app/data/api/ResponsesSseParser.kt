@@ -33,6 +33,12 @@ internal interface ResponsesStreamListener {
 
     /** A chunk of answer text arrived. */
     fun onDelta(text: String) {}
+
+    /** Any event arrived; its type, e.g. `response.created`. */
+    fun onEvent(type: String) {}
+
+    /** A web search call was added to the response: once per search. */
+    fun onSearchCall() {}
 }
 
 internal data class ParsedResponsesStream(
@@ -67,6 +73,7 @@ internal class ResponsesSseParser(
             } catch (_: Exception) {
                 return
             } ?: return
+            obj.str("type")?.let { listener?.onEvent(it) }
             when (val type = obj.str("type")) {
                 "response.failed", "error" -> {
                     errorMessage = obj.errorText() ?: "Streaming response failed."
@@ -104,6 +111,7 @@ internal class ResponsesSseParser(
                         if (item?.str("type") == "web_search_call") {
                             usedWebSearch = true
                             listener?.onSearchStarted()
+                            if (type == "response.output_item.added") listener?.onSearchCall()
                         }
                         collectCitations(item, citations)
                     }

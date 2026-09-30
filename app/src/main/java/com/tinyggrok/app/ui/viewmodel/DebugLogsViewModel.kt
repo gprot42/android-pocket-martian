@@ -3,6 +3,7 @@ package com.tinyggrok.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import com.tinyggrok.app.data.repository.DebugLogEntry
 import com.tinyggrok.app.data.repository.DebugLogRepository
+import com.tinyggrok.app.data.repository.RequestTimingLog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -32,7 +33,8 @@ private const val GROUP_GAP_MS = 30_000L   // new group if gap > 30 s
 
 @HiltViewModel
 class DebugLogsViewModel @Inject constructor(
-    private val debugLogRepository: DebugLogRepository
+    private val debugLogRepository: DebugLogRepository,
+    private val requestTimingLog: RequestTimingLog
 ) : ViewModel() {
 
     val logs: StateFlow<List<DebugLogEntry>> = debugLogRepository.logs
@@ -46,7 +48,11 @@ class DebugLogsViewModel @Inject constructor(
             initialValue = emptyList()
         )
 
-    fun clearLogs() = debugLogRepository.clear()
+    /** Clear means clear: the saved request timings go too, not just what is on screen. */
+    fun clearLogs() {
+        debugLogRepository.clear()
+        requestTimingLog.clear()
+    }
 
     /** Formats every entry across all groups into one copyable block. */
     fun allFormatted(entries: List<DebugLogEntry>): String = buildString {

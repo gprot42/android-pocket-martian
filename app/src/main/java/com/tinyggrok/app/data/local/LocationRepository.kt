@@ -216,7 +216,12 @@ class LocationRepository @Inject constructor(
      */
     suspend fun getApproximateLocation(
         maxAgeMs: Long? = null,
-        waitTimeoutMs: Long = GPS_WAIT_TIMEOUT_MS
+        waitTimeoutMs: Long = GPS_WAIT_TIMEOUT_MS,
+        /**
+         * False to use only what is already known (cache, last fix) and never wait for
+         * satellites. For prompts whose answer does not depend on where the phone is.
+         */
+        allowFreshFix: Boolean = true
     ): UserLocation? = withContext(Dispatchers.IO) {
         if (!hasLocationPermission()) return@withContext null
 
@@ -233,7 +238,7 @@ class LocationRepository @Inject constructor(
             hasFineLocationPermission()
 
         // 2) Cache miss / expired — single GPS session, then release the chip.
-        if (gpsReady) {
+        if (gpsReady && allowFreshFix) {
             val gpsFix = requestGpsSession(
                 lm = lm!!,
                 timeoutMs = waitTimeoutMs,
@@ -506,8 +511,33 @@ class LocationRepository @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
+    /**
+     * Place names already looked up, by position rounded to about 100 m. The lookup is a
+     * blocking network call with no timeout of its own, and it ran on every prompt sent
+     * with a good GPS fix; standing still, the answer is always the same.
+     */
+    private val placeNames = object : LinkedHashMap<String, UserLocation>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, UserLocation>?) = size > 32
+    }
+
     private fun reverseGeocode(location: UserLocation): UserLocation {
         if (!Geocoder.isPresent()) return location
+        val key = "%.3f,%.3f".format(Locale.US, location.latitude, location.longitude)
+        synchronized(placeNames) { placeNames[key] }?.let { known ->
+            return location.copy(
+                locality = known.locality,
+                adminArea = known.adminArea,
+                countryCode = known.countryCode,
+                postalCode = known.postalCode,
+                addressLine = known.addressLine
+            )
+        }
+        return reverseGeocodeUncached(location).also { named ->
+            if (named.locality != null) synchronized(placeNames) { placeNames[key] = named }
+        }
+    }
+
+    private fun reverseGeocodeUncached(location: UserLocation): UserLocation {
         return try {
             val geocoder = Geocoder(context, Locale.getDefault())
             val addresses = geocoder.getFromLocation(location.latitude, location.longitude, 8)

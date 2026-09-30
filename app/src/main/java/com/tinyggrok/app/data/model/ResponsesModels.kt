@@ -103,5 +103,20 @@ data class ResponsesUsage(
     @SerializedName("output_tokens")
     val outputTokens: Int = 0,
     @SerializedName("total_tokens")
-    val totalTokens: Int = 0
+    val totalTokens: Int = 0,
+    @SerializedName("input_tokens_details")
+    val inputDetails: InputTokenDetails? = null,
+    @SerializedName("output_tokens_details")
+    val outputDetails: OutputTokenDetails? = null
+)
+
+data class InputTokenDetails(
+    @SerializedName("cached_tokens")
+    val cachedTokens: Int = 0
+)
+
+/** Reasoning tokens are thinking the user never sees, and usually most of the wait. */
+data class OutputTokenDetails(
+    @SerializedName("reasoning_tokens")
+    val reasoningTokens: Int = 0
 )

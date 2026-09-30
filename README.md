@@ -9,7 +9,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 ## Features
 
 - Secure API key entry and storage in Settings
-- **Credits & usage** screen (chat top bar **Credits**): live prepaid API balance, postpaid limits, model rate quotas via Management API; SuperGrok plan reference (consumer quotas are not exposed by API)
+- **Credits & usage** screen (**Settings → Billing → Credits & usage**): live prepaid API balance, postpaid limits, model rate quotas via Management API; SuperGrok plan reference (consumer quotas are not exposed by API)
 - Three themes: Light, Dark, Tokyo Night
 - Chat models: **Grok 4.7** (default), **4.6** or **4.5**, selectable in Settings; 4.6 is used automatically if your choice is unavailable. Grok 4.7 Fast is deliberately absent: it is the same model on faster hardware at twice the rates, and xAI serves it only through Cursor and Grok Build, not on the public API
 - Uses xAI Agent Tools / Responses API (`https://api.x.ai/v1/responses`)
@@ -35,6 +35,9 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - **Never stuck waiting**: **Stop** cancels a reply that is taking too long, typing while a reply arrives queues your next prompt (it sends itself when the current one lands), and **Clear** also stops anything in flight
 - **Live replies**: the answer streams onto the screen as Grok writes it, with a **Searching the web** status while it looks things up, instead of a motionless indicator until the whole reply lands
 - **Reasoning effort tuned per question**: ordinary questions use `low` effort (the API default is `high`, which spends tens of seconds thinking before the first token); rail/transit questions keep `high`. Agentic tool turns are capped so a vague question cannot loop through searches indefinitely
+- **Only real transport questions get the slow rail treatment**: the rail playbook (high effort, twelve search rounds, and an order to search National Rail before answering) used to fire on any "from … to", any "get/go … to", and words like "delay" or "journey". Replayed on everyday prompts it caught 15 of 24 unrelated ones, among them "Translate this from English to German", "How do I get my dog to stop barking" and "Convert 150 pounds from GBP to EUR". It now needs a transport cue: a named network or operator, a train or bus as transport ("next train", "bus times"), or a route question ("how do I get to …"). Ordinary prompts also no longer wait up to 3 s for a GPS fix, and place names are looked up once per location rather than on every send
+- **Every prompt is timed**: one line per prompt with when the request left the phone, when xAI answered, the first word, the end, how many web searches ran and how many tokens went on reasoning. Numbers only, never the prompt or answer. It appears in **Settings → App → Logs** (Debug mode not needed; **Copy All** to share it), in the system log under the tag `RequestTiming`, and in a file of the last 300 prompts that survives restarts. Example: `grok-4.7 effort=low turns=6 rail=no | request sent 13ms · response headers 480ms · first text 3.9s · done 7.2s (auth 5ms, location 5ms) | 1 searches | in 2,104 out 612 reasoning 310 | ok`
+- **Connection drops ride out a VPN reconnect**: when api.x.ai cannot be reached at all ("no route to host", refused, DNS), the app tries four times over about seven seconds instead of three times over two, and says which it was: "Couldn't reach" for a connection that never opened, "dropped" for one lost mid-answer, and whether a VPN is on
 
 ## Document scanner
 
@@ -238,7 +241,7 @@ To show live **API prepaid balance** and rate quotas:
 
 1. In [console.x.ai](https://console.x.ai) → **Settings → Management Keys**, create a management key (separate from the chat API key).
 2. Paste it under **Settings → API credits / Management** (Team ID is optional; the app auto-detects it).
-3. Open **Credits** on the chat top bar (or **Credits & usage** in Settings) and tap **Refresh**.
+3. Open **Settings → Billing → Credits & usage** and tap **Refresh**.
 
 **SuperGrok Heavy** utilisation cannot be read programmatically — mark your consumer plan on that screen for reference, and check remaining consumer limits in the official Grok app / [grok.com](https://grok.com).
 

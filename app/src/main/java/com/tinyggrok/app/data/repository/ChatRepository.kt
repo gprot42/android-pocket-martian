@@ -42,6 +42,16 @@ import javax.inject.Singleton
 /** How many times a single send may hit the API before we give up (1 + retries). */
 internal const val MAX_RESPONSES_ATTEMPTS = 3
 
+/**
+ * Tries when the connection could not be opened at all (no route, refused, DNS), and the
+ * waits between them. Reported: "NoRouteToHostException. Retried 2x without luck" on a
+ * phone with a VPN on. Three tries 0.5 s and 1.5 s apart gave up within two seconds,
+ * sooner than a VPN takes to reconnect after the phone changes network; these ride out
+ * about seven.
+ */
+internal const val MAX_CONNECT_ATTEMPTS = 4
+internal val CONNECT_RETRY_WAITS_MS = longArrayOf(1_000L, 2_000L, 4_000L)
+
 /** Re-warm the pooled TLS connection if it has been idle longer than this. */
 private const val WARMUP_INTERVAL_MS = 4 * 60 * 1_000L
 
@@ -135,6 +145,15 @@ class ChatRepository @Inject constructor(
      * binder errors) returns true so the real request still runs — this must never
      * be the reason a send crashes.
      */
+    /** Whether the phone's traffic is currently going through a VPN. */
+    private fun isVpnActive(): Boolean = try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    } catch (_: Exception) {
+        false
+    }
+
     private fun isNetworkAvailable(): Boolean {
         return try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -195,7 +214,9 @@ class ChatRepository @Inject constructor(
         /** Optional approximate location snippet already formatted for instructions. */
         locationContext: String? = null,
         /** Called as the reply streams in, off the main thread. */
-        onProgress: ((ChatProgress) -> Unit)? = null
+        onProgress: ((ChatProgress) -> Unit)? = null,
+        /** Where the time goes on this prompt; see [SendTiming]. */
+        timing: SendTiming? = null
     ): Result<ChatResult> {
         if (!isNetworkAvailable()) {
             if (debugMode) {
@@ -363,8 +384,18 @@ class ChatRepository @Inject constructor(
                 Log.d(TAG, "REQUEST: ${sanitizeLogBody(requestJson, maxChars = 4000)}")
             }
 
+            timing?.apply {
+                note("model", request.model)
+                note("effort", request.reasoning?.effort ?: "default")
+                note("turns", request.maxTurns)
+                note("rail", if (transitEnquiry) "yes" else "no")
+                note("prompt", text.length)
+                note("images", imageBase64List.size)
+                note("history", "${history.size} msgs ${"%,d".format(history.sumOf { flattenText(it).length })} chars")
+            }
+
             val call = try {
-                executeResponses(apiKey, request, debugMode, onProgress)
+                executeResponses(apiKey, request, debugMode, onProgress, timing)
             } catch (e: HttpException) {
                 val body = try { e.response()?.errorBody()?.string().orEmpty() } catch (_: Throwable) { "" }
                 if ((request.reasoning != null || request.maxTurns != null) &&
@@ -381,7 +412,8 @@ class ChatRepository @Inject constructor(
                     }
                     onProgress?.invoke(ChatProgress.Restarted)
                     request = request.copy(reasoning = null, maxTurns = null)
-                    executeResponses(apiKey, request, debugMode, onProgress)
+                    timing?.note("effort", "default (low rejected)")
+                    executeResponses(apiKey, request, debugMode, onProgress, timing)
                 } else if (request.model != AppDefaults.BACKUP_MODEL &&
                     isUnknownModelFailure(e.code(), body)
                 ) {
@@ -393,7 +425,8 @@ class ChatRepository @Inject constructor(
                     }
                     onProgress?.invoke(ChatProgress.Restarted)
                     request = request.copy(model = AppDefaults.BACKUP_MODEL)
-                    executeResponses(apiKey, request, debugMode, onProgress)
+                    timing?.note("model", "${request.model} (fallback)")
+                    executeResponses(apiKey, request, debugMode, onProgress, timing)
                 } else {
                     Log.e(TAG, "HTTP ERROR ${e.code()}: ${body.take(2000)}")
                     if (debugMode) {
@@ -419,6 +452,13 @@ class ChatRepository @Inject constructor(
             val usedWebSearch = call.usedWebSearch ||
                 response?.output?.any { it.type == "web_search_call" } == true ||
                 citations.isNotEmpty()
+
+            response?.usage?.let { u ->
+                timing?.note("tokens.in", u.inputTokens)
+                timing?.note("tokens.cached", u.inputDetails?.cachedTokens?.takeIf { it > 0 })
+                timing?.note("tokens.out", u.outputTokens)
+                timing?.note("tokens.reasoning", u.outputDetails?.reasoningTokens?.takeIf { it > 0 })
+            }
 
             val usage = response?.usage?.let {
                 Usage(
@@ -472,13 +512,25 @@ class ChatRepository @Inject constructor(
                     )
                 e.causeChain().any { it is UnknownHostException } ->
                     Result.failure(RuntimeException(dnsFailureMessage("api.x.ai")))
-                isStreamInterruption(e) ->
+                isStreamInterruption(e) -> {
+                    val tries = e.causeChain().filterIsInstance<ConnectAttemptsExhausted>().firstOrNull()?.attempts
+                    val cause = e.causeChain().last().javaClass.simpleName
+                    val how = if (tries != null && tries > 1) " after $tries tries" else ""
+                    val vpn = if (isVpnActive()) {
+                        " A VPN is on: if it was reconnecting, or does not route to api.x.ai, that is the likely cause."
+                    } else {
+                        " Check signal and try again."
+                    }
                     Result.failure(
                         RuntimeException(
-                            "Connection to api.x.ai dropped (${e.causeChain().last().javaClass.simpleName}). " +
-                                "Retried ${MAX_RESPONSES_ATTEMPTS - 1}x without luck — check signal and try again."
+                            if (isTransientConnectFailure(e)) {
+                                "Couldn't reach api.x.ai ($cause)$how.$vpn"
+                            } else {
+                                "Connection to api.x.ai dropped ($cause)$how.$vpn"
+                            }
                         )
                     )
+                }
                 else ->
                     Result.failure(RuntimeException("${e.javaClass.simpleName}: ${e.message ?: "unknown error"}"))
             }
@@ -503,13 +555,14 @@ class ChatRepository @Inject constructor(
         apiKey: String,
         request: ResponsesRequest,
         debugMode: Boolean,
-        onProgress: ((ChatProgress) -> Unit)? = null
+        onProgress: ((ChatProgress) -> Unit)? = null,
+        timing: SendTiming? = null
     ): ResponsesCallResult {
         var attempt = 0
         while (true) {
             attempt++
             try {
-                return readResponses(apiKey, request, debugMode, onProgress)
+                return readResponses(apiKey, request, debugMode, onProgress, timing)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: HttpException) {
@@ -517,25 +570,41 @@ class ChatRepository @Inject constructor(
                 if (!canRetry) throw e
                 val retryAfter = e.response()?.headers()?.get("Retry-After")
                 val wait = retryDelayMs(attempt, retryAfter)
-                logRetry(debugMode, attempt, wait, "HTTP ${e.code()} ${e.message()}")
+                logRetry(debugMode, attempt, MAX_RESPONSES_ATTEMPTS, wait, "HTTP ${e.code()} ${e.message()}", timing)
                 onProgress?.invoke(ChatProgress.Restarted)
                 delay(wait)
             } catch (e: Exception) {
-                val transient = isTransientConnectFailure(e) || e is EarlyStreamFailure
-                if (attempt >= MAX_RESPONSES_ATTEMPTS || !transient) throw e
-                val wait = retryDelayMs(attempt)
-                logRetry(debugMode, attempt, wait, "${e.javaClass.simpleName}: ${e.message}")
+                val cannotConnect = isTransientConnectFailure(e)
+                val transient = cannotConnect || e is EarlyStreamFailure
+                val limit = if (cannotConnect) MAX_CONNECT_ATTEMPTS else MAX_RESPONSES_ATTEMPTS
+                if (!transient) throw e
+                // Say how many tries it took, without hiding what the failure was.
+                if (attempt >= limit) throw if (attempt > 1) ConnectAttemptsExhausted(e, attempt) else e
+                val wait = if (cannotConnect) {
+                    CONNECT_RETRY_WAITS_MS[(attempt - 1).coerceAtMost(CONNECT_RETRY_WAITS_MS.lastIndex)]
+                } else {
+                    retryDelayMs(attempt)
+                }
+                logRetry(debugMode, attempt, limit, wait, "${e.javaClass.simpleName}: ${e.message}", timing)
                 onProgress?.invoke(ChatProgress.Restarted)
                 delay(wait)
             }
         }
     }
 
-    private fun logRetry(debugMode: Boolean, attempt: Int, waitMs: Long, reason: String) {
+    private fun logRetry(
+        debugMode: Boolean,
+        attempt: Int,
+        limit: Int,
+        waitMs: Long,
+        reason: String,
+        timing: SendTiming?
+    ) {
         Log.w(TAG, "Attempt $attempt failed ($reason); retrying in ${waitMs}ms")
+        timing?.note("retried after", reason.substringBefore(':'))
         if (debugMode) {
             debugLogRepository.logIncoming(
-                summary = "RETRY ${attempt + 1}/$MAX_RESPONSES_ATTEMPTS in ${waitMs}ms",
+                summary = "RETRY ${attempt + 1}/$limit in ${waitMs}ms",
                 body = reason
             )
         }
@@ -559,12 +628,15 @@ class ChatRepository @Inject constructor(
         apiKey: String,
         request: ResponsesRequest,
         debugMode: Boolean,
-        onProgress: ((ChatProgress) -> Unit)? = null
+        onProgress: ((ChatProgress) -> Unit)? = null,
+        timing: SendTiming? = null
     ): ResponsesCallResult = withContext(Dispatchers.IO) {
+        timing?.attemptStarted()
         val http = apiService.responsesStream(
             auth = "Bearer $apiKey",
             request = request
         )
+        timing?.mark(SendTiming.Mark.HEADERS)
         if (!http.isSuccessful) {
             throw HttpException(http)
         }
@@ -597,10 +669,22 @@ class ChatRepository @Inject constructor(
                 )
             }
             val counting = CountingReader(rb.charStream())
-            val listener = onProgress?.let { emit ->
-                object : ResponsesStreamListener {
-                    override fun onSearchStarted() = emit(ChatProgress.Searching)
-                    override fun onDelta(text: String) = emit(ChatProgress.Delta(text))
+            val listener = object : ResponsesStreamListener {
+                override fun onSearchStarted() {
+                    onProgress?.invoke(ChatProgress.Searching)
+                }
+
+                override fun onDelta(text: String) {
+                    timing?.mark(SendTiming.Mark.FIRST_TEXT)
+                    onProgress?.invoke(ChatProgress.Delta(text))
+                }
+
+                override fun onEvent(type: String) {
+                    timing?.mark(SendTiming.Mark.FIRST_EVENT)
+                }
+
+                override fun onSearchCall() {
+                    timing?.searchStarted()
                 }
             }
             val parsed = try {
@@ -707,31 +791,6 @@ class ChatRepository @Inject constructor(
             .filterIsInstance<TextContent>()
             .joinToString("\n") { it.text }
 
-    /**
-     * Heuristic: does this look like a UK rail / live-travel enquiry where we must
-     * force National Rail web_search behaviour via stronger instructions?
-     */
-    private fun looksLikeTransitEnquiry(text: String): Boolean {
-        val t = text.lowercase()
-        if (t.isBlank()) return false
-        val keywords = listOf(
-            "train", "trains", "rail", "railway", "departure", "departures", "arrival",
-            "arrivals", "timetable", "platform", "platforms", "delay", "delays",
-            "disruption", "cancelled", "canceled", "national rail", "thameslink",
-            "tube", "underground", "overground", "elizabeth line", "dlr",
-            "bus to", "buses", "journey", "how do i get", "how to get",
-            "from here", "current location", "near me", "nearest station",
-            "st albans", "st. albans", "st pancras", "kings cross", "king's cross",
-            "euston", "paddington", "liverpool street", "waterloo", "victoria",
-            "greater anglia", "tfl", "live times", "next train", "next trains"
-        )
-        if (keywords.any { it in t }) return true
-        // "to X" / "from A to B" travel phrasing
-        if (Regex("""\bfrom\b.+\bto\b""").containsMatchIn(t)) return true
-        if (Regex("""\b(get|go|travel|transport)\b.+\bto\b""").containsMatchIn(t)) return true
-        return false
-    }
-
     /** Pull the assistant text out of a Responses API result. */
     private fun extractText(response: ResponsesResponse): String {
         response.outputText?.takeIf { it.isNotBlank() }?.let { return it }
@@ -829,3 +888,7 @@ internal fun redactImagesForLog(request: ResponsesRequest): ResponsesRequest {
     }
     return request.copy(input = redactedInput)
 }
+
+/** The last failure of a request that was tried [attempts] times. */
+internal class ConnectAttemptsExhausted(cause: Throwable, val attempts: Int) :
+    java.io.IOException(cause.message, cause)

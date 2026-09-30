@@ -55,8 +55,7 @@ fun AppNavigation(
                 onNavigateToSettings = { navController.navigate(Screen.Settings.destination()) },
                 onNavigateToDebugLogs = { navController.navigate(Screen.DebugLogs.route) },
                 onNavigateToHistory = { navController.navigate(Screen.History.route) },
-                onNavigateToVoiceTranslator = { navController.navigate(Screen.VoiceTranslator.route) },
-                onNavigateToUsage = { navController.navigate(Screen.Usage.route) }
+                onNavigateToVoiceTranslator = { navController.navigate(Screen.VoiceTranslator.route) }
             )
         }
         composable(
@@ -73,6 +72,7 @@ fun AppNavigation(
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToAbout = { navController.navigate(Screen.About.route) },
                 onNavigateToUsage = { navController.navigate(Screen.Usage.route) },
+                onNavigateToLogs = { navController.navigate(Screen.DebugLogs.route) },
                 initialSection = entry.arguments?.getString("section")
             )
         }

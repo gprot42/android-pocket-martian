@@ -77,6 +77,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToUsage: () -> Unit = {},
+    onNavigateToLogs: () -> Unit = {},
     initialSection: String? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
     updateViewModel: UpdateViewModel = hiltViewModel()
@@ -172,6 +173,7 @@ fun SettingsScreen(
                 onOpen = { page = it },
                 onOpenUsage = onNavigateToUsage,
                 onOpenAbout = onNavigateToAbout,
+                onOpenLogs = onNavigateToLogs,
                 onDebugChange = viewModel::updateDebugMode,
                 scrollState = homeScroll,
                 modifier = pageModifier
