@@ -171,6 +171,20 @@ class LocationRepository @Inject constructor(
      * Safe to call repeatedly; no-ops if a warm-up is already running or permission/GPS
      * is missing. Does nothing useful if the cache is already fresh.
      */
+    /**
+     * When a GPS session last ended without a fix. Measured on the reporting phone: a
+     * prompt that needed its location waited the full 3 s for satellites and got
+     * nothing, indoors, with no network location to fall back on. The next prompt would
+     * have done the same. So after a failure, prompts do not wait again for
+     * [GPS_FAILURE_COOLDOWN_MS]; a background attempt keeps trying meanwhile, so a later
+     * prompt can pick up its fix from the cache without waiting at all.
+     */
+    @Volatile private var lastFixFailedAt = 0L
+
+    /** Whether a recent GPS session failed, so waiting for another is likely wasted. */
+    fun fixRecentlyFailed(now: Long = System.currentTimeMillis()): Boolean =
+        lastFixFailedAt != 0L && now - lastFixFailedAt < GPS_FAILURE_COOLDOWN_MS
+
     fun startGpsWarmup() {
         if (!hasFineLocationPermission()) return
         val lm = locationManager() ?: return
@@ -191,7 +205,10 @@ class LocationRepository @Inject constructor(
                         earlyExitAccuracyM = EARLY_EXIT_ACCURACY_M,
                         minSamplesForEarlyExit = 2
                     )
-                    if (fix != null) writeCache(fix)
+                    if (fix != null) {
+                        writeCache(fix)
+                        lastFixFailedAt = 0L
+                    }
                 }
             }
         }
@@ -238,7 +255,7 @@ class LocationRepository @Inject constructor(
             hasFineLocationPermission()
 
         // 2) Cache miss / expired — single GPS session, then release the chip.
-        if (gpsReady && allowFreshFix) {
+        if (gpsReady && allowFreshFix && !fixRecentlyFailed()) {
             val gpsFix = requestGpsSession(
                 lm = lm!!,
                 timeoutMs = waitTimeoutMs,
@@ -247,8 +264,12 @@ class LocationRepository @Inject constructor(
             )
             if (gpsFix != null) {
                 writeCache(gpsFix)
+                lastFixFailedAt = 0L
                 return@withContext finalizeLocation(gpsFix)
             }
+            // Nothing in time. Keep trying in the background for the next prompt.
+            lastFixFailedAt = System.currentTimeMillis()
+            startGpsWarmup()
 
             // Session failed mid-way; accept a slightly looser cache entry if present.
             readCachedGps(ttlMs, MAX_CACHE_GPS_ACCURACY_M)?.let { recent ->
@@ -605,6 +626,9 @@ class LocationRepository @Inject constructor(
     companion object {
         /** Max wait for a live GPS session when the cache is cold/expired. */
         private const val GPS_WAIT_TIMEOUT_MS = 25_000L
+
+        /** After a GPS session fails, prompts stop waiting for another this long. */
+        private const val GPS_FAILURE_COOLDOWN_MS = 5 * 60_000L
 
         /** Max wait for the optional app-start warm fill of the cache. */
         private const val WARMUP_TIMEOUT_MS = 30_000L

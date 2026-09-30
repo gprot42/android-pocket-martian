@@ -21,6 +21,7 @@ import com.tinyggrok.app.data.local.StoredMessage
 import com.tinyggrok.app.data.repository.RequestTimingLog
 import com.tinyggrok.app.data.repository.ResponseHistoryRepository
 import com.tinyggrok.app.data.repository.SendTiming
+import com.tinyggrok.app.data.repository.htmlToHistoryText
 import com.tinyggrok.app.data.repository.SpeechToTextRepository
 import com.tinyggrok.app.data.repository.appendDictation
 import com.tinyggrok.app.data.repository.wantsFreshLocation
@@ -597,7 +598,9 @@ class ChatViewModel @Inject constructor(
             // fix; anything else goes at once with whatever location is already known.
             // Every prompt used to wait up to three seconds for satellites whenever the
             // last fix was over ten minutes old, indoors usually in vain.
-            val freshLocation = wantsFreshLocation(prompt)
+            val wantsLocation = wantsFreshLocation(prompt)
+            val gpsJustFailed = wantsLocation && locationRepository.fixRecentlyFailed()
+            val freshLocation = wantsLocation && !gpsJustFailed
             // Kick off the lookup immediately so it overlaps with auth and settings reads.
             val locationDeferred = async {
                 if (settingsRepository.locationEnabled.first()) {
@@ -616,7 +619,8 @@ class ChatViewModel @Inject constructor(
                     timing.note(
                         "location",
                         when {
-                            it == null -> "none"
+                            gpsJustFailed -> if (it == null) "none (GPS failed recently, not waited for)" else "(GPS failed recently, used what was known)"
+                            it == null -> if (freshLocation) "none (waited for GPS)" else "none"
                             freshLocation -> "(could wait for GPS)"
                             else -> "(known only)"
                         }
@@ -660,9 +664,16 @@ class ChatViewModel @Inject constructor(
                 streamingStatus = "Thinking\u2026"
             )
 
-            // Recent turns only, within a character budget (see trimHistory).
+            // Recent turns only, within a character budget (see trimHistory). The turns
+            // are chosen on their stored text, then past answers go as plain words: the
+            // same conversation, never more to send than before (see htmlToHistoryText).
             val history = trimHistory(previousMessages)
-                .map { msg -> Message(role = msg.role, text = msg.content) }
+                .map { msg ->
+                    Message(
+                        role = msg.role,
+                        text = if (msg.role == "assistant") htmlToHistoryText(msg.content) else msg.content
+                    )
+                }
 
             val locationContext = locationDeferred.await()
 
