@@ -1,5 +1,9 @@
 package com.tinyggrok.app.ui.screens
 
+import com.tinyggrok.app.ui.viewmodel.Dictation
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.LinearProgressIndicator
 import com.tinyggrok.app.ui.viewmodel.UpdateViewModel
 import android.Manifest
@@ -178,6 +182,17 @@ fun ChatScreen(
             x = offset.x.coerceIn(-maxX, 0f),
             y = offset.y.coerceIn(-maxY, 0f)
         )
+    }
+
+    // Asked the first time the microphone is tapped; listening starts once allowed.
+    val micPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            viewModel.startDictation()
+        } else {
+            Toast.makeText(context, "Tiny Ggrok needs the microphone to take dictation.", Toast.LENGTH_LONG).show()
+        }
     }
 
     val imagePicker = rememberLauncherForActivityResult(
@@ -601,17 +616,39 @@ fun ChatScreen(
                 maxLines = 4,
                 enabled = true,
                 trailingIcon = {
-                    IconButton(
-                        onClick = { imagePicker.launch("image/*") },
-                        enabled = canAttach
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Image,
-                            contentDescription = "Attach images"
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        DictationButton(
+                            state = uiState.dictation,
+                            onStart = {
+                                val granted = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (granted) viewModel.startDictation()
+                                else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            onFinish = viewModel::finishDictation
                         )
+                        IconButton(
+                            onClick = { imagePicker.launch("image/*") },
+                            enabled = canAttach
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Image,
+                                contentDescription = "Attach images"
+                            )
+                        }
                     }
                 }
             )
+
+            if (uiState.dictation != Dictation.IDLE) {
+                DictationRow(
+                    state = uiState.dictation,
+                    seconds = uiState.dictationSeconds,
+                    onFinish = viewModel::finishDictation,
+                    onCancel = viewModel::cancelDictation
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1414,6 +1451,47 @@ private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
         // contentHeight often settles shortly after onPageFinished
         postDelayed({ report() }, 50)
         postDelayed({ report() }, 150)
+    }
+}
+
+/** The microphone in the prompt box: tap to speak, tap again to turn it into text. */
+@Composable
+private fun DictationButton(state: Dictation, onStart: () -> Unit, onFinish: () -> Unit) {
+    when (state) {
+        Dictation.IDLE -> IconButton(onClick = onStart) {
+            Icon(Icons.Default.Mic, contentDescription = "Speak your prompt")
+        }
+        Dictation.LISTENING -> IconButton(onClick = onFinish) {
+            Icon(
+                Icons.Default.Stop,
+                contentDescription = "Stop and convert to text",
+                tint = MaterialTheme.colorScheme.error
+            )
+        }
+        Dictation.TRANSCRIBING -> Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+/** "Listening 0:07" with Done and Cancel, or "Turning speech into text…". */
+@Composable
+private fun DictationRow(state: Dictation, seconds: Int, onFinish: () -> Unit, onCancel: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = if (state == Dictation.LISTENING) {
+                "\u25CF Listening %d:%02d".format(seconds / 60, seconds % 60)
+            } else {
+                "Turning speech into text\u2026"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            color = if (state == Dictation.LISTENING) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
+            modifier = Modifier.weight(1f)
+        )
+        if (state == Dictation.LISTENING) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            TextButton(onClick = onFinish) { Text("Done") }
+        }
     }
 }
 

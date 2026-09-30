@@ -66,8 +66,8 @@ class SendTiming(private val nowMs: () -> Long = { System.nanoTime() / 1_000_000
     fun summary(outcome: String): String {
         mark(Mark.DONE)
         fun s(ms: Long?) = if (ms == null) "-" else if (ms < 1000) "${ms}ms" else "%.1fs".format(ms / 1000.0)
-        val head = listOf("model", "effort", "turns", "rail", "stream")
-            .mapNotNull { k -> info[k]?.let { if (k == "model") it else "$k=$it" } }
+        val head = listOf("kind", "model", "effort", "turns", "rail", "stream")
+            .mapNotNull { k -> info[k]?.let { if (k == "model" || k == "kind") it else "$k=$it" } }
             .joinToString(" ")
         val phases = Mark.entries
             .filter { it != Mark.AUTH && it != Mark.LOCATION }
@@ -89,7 +89,7 @@ class SendTiming(private val nowMs: () -> Long = { System.nanoTime() / 1_000_000
         return listOf(
             head,
             phases + (if (before.isNotEmpty()) " ($before)" else ""),
-            "$searches searches",
+            if (info["kind"] == null) "$searches searches" else "",
             tokens,
             context,
             outcome

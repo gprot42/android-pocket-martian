@@ -21,6 +21,8 @@ import com.tinyggrok.app.data.local.StoredMessage
 import com.tinyggrok.app.data.repository.RequestTimingLog
 import com.tinyggrok.app.data.repository.ResponseHistoryRepository
 import com.tinyggrok.app.data.repository.SendTiming
+import com.tinyggrok.app.data.repository.SpeechToTextRepository
+import com.tinyggrok.app.data.repository.appendDictation
 import com.tinyggrok.app.data.repository.wantsFreshLocation
 import com.tinyggrok.app.data.repository.SuperGrokAuthRepository
 import com.tinyggrok.app.data.share.IncomingShare
@@ -199,6 +201,8 @@ data class CostInfo(
             .format(promptTokens, completionTokens, estimatedCostUsd)
 }
 
+enum class Dictation { IDLE, LISTENING, TRANSCRIBING }
+
 data class ChatUiState(
     val messages: List<ChatUiMessage> = emptyList(),
     val prompt: String = "",
@@ -218,7 +222,11 @@ data class ChatUiState(
     /** When true, chat attaches approximate GPS (if OS permission granted). */
     val locationEnabled: Boolean = true,
     /** Prompt typed while a reply was in flight; sent automatically when it lands. */
-    val queuedPrompt: QueuedPrompt? = null
+    val queuedPrompt: QueuedPrompt? = null,
+    /** Speaking the prompt instead of typing it. */
+    val dictation: Dictation = Dictation.IDLE,
+    /** Seconds recorded so far while [dictation] is LISTENING. */
+    val dictationSeconds: Int = 0
 ) {
     val hasAttachedImages: Boolean get() = attachedImages.isNotEmpty()
 
@@ -236,6 +244,7 @@ class ChatViewModel @Inject constructor(
     private val responseHistoryRepository: ResponseHistoryRepository,
     private val transcriptStore: ChatTranscriptStore,
     private val requestTimingLog: RequestTimingLog,
+    private val speechToText: SpeechToTextRepository,
     private val incomingShareRepository: IncomingShareRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -352,6 +361,98 @@ class ChatViewModel @Inject constructor(
         if (uris.isNotEmpty()) {
             attachImages(uris)
         }
+    }
+
+    /** Counts the seconds while listening; also notices the recorder stopping itself. */
+    private var dictationTicker: Job? = null
+
+    /** Start listening. The screen has already been granted the microphone. */
+    fun startDictation() {
+        if (_uiState.value.dictation != Dictation.IDLE) return
+        if (!speechToText.start()) {
+            _uiState.value = _uiState.value.copy(errorMessage = "Couldn't open the microphone.")
+            return
+        }
+        _uiState.value = _uiState.value.copy(dictation = Dictation.LISTENING, dictationSeconds = 0, errorMessage = null)
+        dictationTicker?.cancel()
+        dictationTicker = viewModelScope.launch {
+            while (_uiState.value.dictation == Dictation.LISTENING) {
+                _uiState.value = _uiState.value.copy(dictationSeconds = speechToText.recordedSeconds().toInt())
+                // It stops by itself at the length limit; finish as if the user had tapped.
+                if (!speechToText.isRecording) {
+                    finishDictation()
+                    break
+                }
+                delay(250)
+            }
+        }
+    }
+
+    /** Stop listening and turn what was said into prompt text. */
+    fun finishDictation() {
+        if (_uiState.value.dictation != Dictation.LISTENING) return
+        _uiState.value = _uiState.value.copy(dictation = Dictation.TRANSCRIBING)
+        viewModelScope.launch {
+            val timing = SendTiming()
+            timing.note("kind", "speech-to-text")
+            timing.note("model", SpeechToTextRepository.MODEL)
+            val limited = speechToText.reachedLimit
+            val wav = speechToText.stop()
+            if (wav == null) {
+                _uiState.value = _uiState.value.copy(
+                    dictation = Dictation.IDLE,
+                    errorMessage = "Didn't catch anything. Tap the microphone and speak, then tap it again."
+                )
+                return@launch
+            }
+            val audioSeconds = (wav.size - 44) / 32_000.0
+            val auth = superGrokAuthRepository.resolveAuth()
+            timing.mark(SendTiming.Mark.AUTH)
+            val token = (auth as? ResolvedAuth.Ok)?.bearerToken
+            if (token == null) {
+                _uiState.value = _uiState.value.copy(
+                    dictation = Dictation.IDLE,
+                    errorMessage = (auth as? ResolvedAuth.Missing)?.message ?: "Sign in or add an API key to dictate."
+                )
+                return@launch
+            }
+            val result = speechToText.transcribe(token, wav, timing)
+            val audio = "%.1f s of audio".format(audioSeconds)
+            requestTimingLog.record(
+                timing.summary(
+                    result.fold(
+                        onSuccess = { "ok, ${it.text.split(Regex("\\s+")).size} words from $audio" + (it.language?.let { l -> " ($l)" } ?: "") },
+                        onFailure = { "error: ${it.message.orEmpty().take(120)} ($audio)" }
+                    )
+                )
+            )
+            _uiState.value = result.fold(
+                onSuccess = { transcript ->
+                    _uiState.value.copy(
+                        dictation = Dictation.IDLE,
+                        prompt = appendDictation(_uiState.value.prompt, transcript.text),
+                        errorMessage = if (limited) "Stopped listening after ${SpeechToTextRepository.MAX_SECONDS / 60} minutes." else null
+                    )
+                },
+                onFailure = { error ->
+                    _uiState.value.copy(dictation = Dictation.IDLE, errorMessage = error.message)
+                }
+            )
+            rememberConversation()
+        }
+    }
+
+    /** Stop listening and throw the recording away. */
+    fun cancelDictation() {
+        dictationTicker?.cancel()
+        speechToText.cancel()
+        _uiState.value = _uiState.value.copy(dictation = Dictation.IDLE, dictationSeconds = 0)
+    }
+
+    override fun onCleared() {
+        // Never leave the microphone running behind a closed screen.
+        speechToText.cancel()
+        super.onCleared()
     }
 
     fun updatePrompt(prompt: String) {
