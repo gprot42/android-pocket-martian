@@ -26,6 +26,8 @@ class SettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val API_KEY_KEY = stringPreferencesKey("api_key")
+    /** The user's own Realtime Trains token (api-portal.rtt.io), for live UK train times. */
+    private val RTT_TOKEN_KEY = stringPreferencesKey("rtt_token")
     /** Management key for billing/credit queries (management-api.x.ai). */
     private val MANAGEMENT_KEY_KEY = stringPreferencesKey("management_key")
     /** Optional team UUID; if blank, resolved from management key validation. */
@@ -72,6 +74,9 @@ class SettingsRepository @Inject constructor(
 
     val apiKey: Flow<String?> = context.dataStore.data
         .map { preferences -> preferences[API_KEY_KEY] }
+
+    val rttToken: Flow<String?> = context.dataStore.data
+        .map { preferences -> preferences[RTT_TOKEN_KEY]?.takeIf { it.isNotBlank() } }
 
     val authMode: Flow<String> = context.dataStore.data
         .map { preferences -> preferences[AUTH_MODE_KEY] ?: "API_KEY" }
@@ -177,6 +182,14 @@ class SettingsRepository @Inject constructor(
                 preferences[LOCATION_CACHE_TIMEOUT_MINUTES_KEY]
             )
         }
+
+    suspend fun saveRttToken(token: String) {
+        context.dataStore.edit { it[RTT_TOKEN_KEY] = token.trim() }
+    }
+
+    suspend fun clearRttToken() {
+        context.dataStore.edit { it.remove(RTT_TOKEN_KEY) }
+    }
 
     suspend fun saveApiKey(key: String) {
         context.dataStore.edit { preferences ->

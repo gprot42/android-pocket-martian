@@ -14,7 +14,8 @@ import com.tinyggrok.app.AppDefaults
  */
 data class ResponsesRequest(
     val model: String = AppDefaults.DEFAULT_MODEL,
-    val input: List<InputMessage>,
+    /** Turns ([InputMessage]), and when tools were called, [FunctionCallItem]s and their outputs. */
+    val input: List<Any>,
     val tools: List<ResponseTool>? = null,
     val instructions: String? = null,
     @SerializedName("max_output_tokens")
@@ -47,7 +48,28 @@ data class ReasoningConfig(
  */
 data class ResponseTool(
     val type: String,
-    val filters: WebSearchFilters? = null
+    val filters: WebSearchFilters? = null,
+    /** For type "function": a tool the app runs itself (see [ChatRepository]). */
+    val name: String? = null,
+    val description: String? = null,
+    val parameters: JsonElement? = null
+)
+
+/** A function call the model made, sent back with its result on the next request. */
+data class FunctionCallItem(
+    val type: String = "function_call",
+    @SerializedName("call_id")
+    val callId: String,
+    val name: String,
+    val arguments: String
+)
+
+/** The app's answer to a [FunctionCallItem]. */
+data class FunctionCallOutputItem(
+    val type: String = "function_call_output",
+    @SerializedName("call_id")
+    val callId: String,
+    val output: String
 )
 
 data class WebSearchFilters(
@@ -88,7 +110,12 @@ data class ResponsesResponse(
 data class OutputItem(
     val type: String? = null,
     val role: String? = null,
-    val content: List<OutputContent>? = null
+    val content: List<OutputContent>? = null,
+    /** For type "function_call". */
+    @SerializedName("call_id")
+    val callId: String? = null,
+    val name: String? = null,
+    val arguments: String? = null
 )
 
 data class OutputContent(

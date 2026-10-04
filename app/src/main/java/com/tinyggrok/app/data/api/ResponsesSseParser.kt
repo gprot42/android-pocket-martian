@@ -1,5 +1,7 @@
 package com.tinyggrok.app.data.api
 
+import com.tinyggrok.app.data.model.FunctionCallItem
+
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -46,7 +48,9 @@ internal data class ParsedResponsesStream(
     val accumulatedText: String = "",
     val citations: List<String> = emptyList(),
     val usedWebSearch: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** Calls to the app's own tools; the model waits for their results. */
+    val functionCalls: List<FunctionCallItem> = emptyList()
 )
 
 internal class ResponsesSseParser(
@@ -61,7 +65,15 @@ internal class ResponsesSseParser(
         var completed: ResponsesResponse? = null
         var usedWebSearch = false
         var errorMessage: String? = null
+        val functionCalls = LinkedHashMap<String, FunctionCallItem>()
         val dataLines = ArrayList<String>()
+
+        fun collectFunctionCall(item: JsonObject?) {
+            if (item?.str("type") != "function_call") return
+            val callId = item.str("call_id") ?: return
+            val name = item.str("name") ?: return
+            functionCalls[callId] = FunctionCallItem(callId = callId, name = name, arguments = item.str("arguments") ?: "{}")
+        }
 
         fun flushEvent() {
             if (dataLines.isEmpty()) return
@@ -85,6 +97,7 @@ internal class ResponsesSseParser(
                     }.getOrNull() ?: completed
                     collectCitations(payload, citations)
                     if (payloadHasWebSearch(payload)) usedWebSearch = true
+                    payload.arr("output")?.forEach { if (it.isJsonObject) collectFunctionCall(it.asJsonObject) }
                 }
                 "response.output_text.delta", "response.text.delta" -> {
                     obj.str("delta")?.let {
@@ -108,6 +121,8 @@ internal class ResponsesSseParser(
                     }
                     if (type == "response.output_item.added" || type == "response.output_item.done") {
                         val item = obj.obj("item")
+                        // A function call arrives whole, not streamed in pieces.
+                        if (type == "response.output_item.done") collectFunctionCall(item)
                         if (item?.str("type") == "web_search_call") {
                             usedWebSearch = true
                             listener?.onSearchStarted()
@@ -147,7 +162,8 @@ internal class ResponsesSseParser(
             accumulatedText = text.toString(),
             citations = citations.toList(),
             usedWebSearch = usedWebSearch || citations.isNotEmpty(),
-            errorMessage = errorMessage
+            errorMessage = errorMessage,
+            functionCalls = functionCalls.values.toList()
         )
     }
 

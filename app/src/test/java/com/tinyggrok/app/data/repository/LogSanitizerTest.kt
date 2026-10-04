@@ -73,7 +73,7 @@ class LogSanitizerTest {
             )
         )
         val redacted = redactImagesForLog(request)
-        val parts = redacted.input.single().content as List<*>
+        val parts = (redacted.input.single() as InputMessage).content as List<*>
         val imagePart = parts[0] as InputContent
         val textPart = parts[1] as InputContent
         assertTrue(imagePart.imageUrl!!.contains("omitted ${image.length} chars"))

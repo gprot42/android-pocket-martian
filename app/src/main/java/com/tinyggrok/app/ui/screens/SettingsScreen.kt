@@ -69,6 +69,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.tinyggrok.app.data.local.SettingsRepository
 import com.tinyggrok.app.ui.viewmodel.SettingsViewModel
 import com.tinyggrok.app.ui.viewmodel.UpdateViewModel
+import com.tinyggrok.app.ui.viewmodel.TrainsSettingsViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -80,7 +81,8 @@ fun SettingsScreen(
     onNavigateToLogs: () -> Unit = {},
     initialSection: String? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
-    updateViewModel: UpdateViewModel = hiltViewModel()
+    updateViewModel: UpdateViewModel = hiltViewModel(),
+    trainsViewModel: TrainsSettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val update by updateViewModel.state.collectAsState()
@@ -175,6 +177,7 @@ fun SettingsScreen(
                 onOpenAbout = onNavigateToAbout,
                 onOpenLogs = onNavigateToLogs,
                 onDebugChange = viewModel::updateDebugMode,
+                trainsTokenSaved = trainsViewModel.state.collectAsState().value.saved,
                 scrollState = homeScroll,
                 modifier = pageModifier
             )
@@ -208,6 +211,7 @@ fun SettingsScreen(
                         onOpenUsage = onNavigateToUsage
                     )
                     SettingsDestination.Updates -> UpdatesSettings(update, updateViewModel)
+                    SettingsDestination.Trains -> TrainsSettings(trainsViewModel)
                     SettingsDestination.Home -> Unit
                 }
             }

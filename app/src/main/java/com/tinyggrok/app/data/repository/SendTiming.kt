@@ -43,6 +43,15 @@ class SendTiming(private val nowMs: () -> Long = { System.nanoTime() / 1_000_000
 
     fun elapsed(mark: Mark): Long? = marks[mark]
 
+    @Volatile private var trainLookups = 0
+    @Volatile private var trainMs = 0L
+
+    /** A live train times lookup the app ran for the model, and how long it took. */
+    fun trainLookup(ms: Long) {
+        trainLookups++
+        trainMs += ms
+    }
+
     fun searchStarted() {
         searches++
         mark(Mark.FIRST_SEARCH)
@@ -84,6 +93,7 @@ class SendTiming(private val nowMs: () -> Long = { System.nanoTime() / 1_000_000
             info["history"]?.let { "history $it" },
             info["prompt"]?.let { "prompt $it chars" },
             info["images"]?.takeIf { it != "0" }?.let { "$it images" },
+            trainLookups.takeIf { it > 0 }?.let { "$it train lookups ${trainMs}ms" },
             attempts.takeIf { it > 1 }?.let { n -> "$n attempts" + (info["retried after"]?.let { " (retried after $it)" } ?: "") }
         ).joinToString(", ")
         return listOf(

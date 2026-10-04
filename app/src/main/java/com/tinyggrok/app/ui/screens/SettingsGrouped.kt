@@ -2,6 +2,10 @@
 
 package com.tinyggrok.app.ui.screens
 
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+import com.tinyggrok.app.ui.viewmodel.TrainsSettingsViewModel
+import androidx.compose.material.icons.filled.Train
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.ScrollState
@@ -96,6 +100,7 @@ internal enum class SettingsDestination(val title: String) {
     Chat("Model & replies"),
     Voice("Voice"),
     Location("Location"),
+    Trains("UK train times"),
     Appearance("Theme & text"),
     Management("Management key"),
     Updates("Updates");
@@ -117,6 +122,7 @@ internal fun SettingsHome(
     onOpenAbout: () -> Unit,
     onOpenLogs: () -> Unit,
     onDebugChange: (Boolean) -> Unit,
+    trainsTokenSaved: Boolean = false,
     scrollState: ScrollState,
     modifier: Modifier = Modifier
 ) {
@@ -154,6 +160,13 @@ internal fun SettingsHome(
                 subtitle = locationSummary(uiState),
                 icon = Icons.Default.LocationOn,
                 onClick = { onOpen(SettingsDestination.Location) }
+            )
+            SettingsInsetDivider()
+            SettingsNavRow(
+                title = "UK train times",
+                subtitle = if (trainsTokenSaved) "Live from Realtime Trains" else "Add a Realtime Trains token",
+                icon = Icons.Default.Train,
+                onClick = { onOpen(SettingsDestination.Trains) }
             )
         }
         SettingsGroup(title = "Appearance") {
@@ -1115,4 +1128,83 @@ private fun updateSummary(update: UpdateUiState): String = when {
     update.available != null ->
         "Version ${update.currentVersion} · ${update.available.versionName} ready"
     else -> "Version ${update.currentVersion}"
+}
+
+/**
+ * The user's own Realtime Trains token. Stored on this phone only and sent only to
+ * data.rtt.io; see RealtimeTrainsRepository for why and how it is used.
+ */
+@Composable
+internal fun TrainsSettings(viewModel: TrainsSettingsViewModel) {
+    val state by viewModel.state.collectAsState()
+    val uriHandler = LocalUriHandler.current
+    var show by remember { mutableStateOf(false) }
+    SettingsSection(title = "UK train times", icon = Icons.Default.Train, showHeader = false) {
+        Text(
+            "With your own Realtime Trains token, Grok reads live departures, delays, cancellations " +
+                "and platforms from Network Rail's running data, instead of searching the web for them.",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Create a token at api-portal.rtt.io. It is stored on this phone only and sent only to " +
+                "Realtime Trains; it is never part of the app. Use your own: Realtime Trains revokes " +
+                "tokens it finds inside distributed apps.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(onClick = { uriHandler.openUri("https://api-portal.rtt.io") }) {
+            Text("Get a token at api-portal.rtt.io")
+        }
+        OutlinedTextField(
+            value = state.token,
+            onValueChange = viewModel::updateToken,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Realtime Trains token") },
+            singleLine = true,
+            enabled = !state.checking,
+            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { show = !show }) {
+                    Icon(
+                        imageVector = if (show) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (show) "Hide token" else "Show token"
+                    )
+                }
+            }
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = viewModel::save,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !state.checking && state.token.isNotBlank()
+        ) { Text("Save") }
+        Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = viewModel::check,
+                modifier = Modifier.weight(1f),
+                enabled = !state.checking && state.token.isNotBlank()
+            ) {
+                if (state.checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(if (state.checking) "Checking\u2026" else "Check")
+            }
+            OutlinedButton(
+                onClick = viewModel::clear,
+                modifier = Modifier.weight(1f),
+                enabled = !state.checking && (state.saved || state.token.isNotBlank())
+            ) { Text("Clear") }
+        }
+        state.message?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            )
+        }
+    }
 }

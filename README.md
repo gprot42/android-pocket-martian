@@ -14,6 +14,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - Chat models: **Grok 4.7** (default), **4.6** or **4.5**, selectable in Settings; 4.6 is used automatically if your choice is unavailable. Grok 4.7 Fast is deliberately absent: it is the same model on faster hardware at twice the rates, and xAI serves it only through Cursor and Grok Build, not on the public API
 - Uses xAI Agent Tools / Responses API (`https://api.x.ai/v1/responses`)
 - **Live web search**: when Grok is unsure or a question depends on recent/factual information, it automatically uses the `web_search` tool instead of guessing. Source links are appended to answers (tap to open, long-press to copy)
+- **Live UK train times** with your own [Realtime Trains](https://www.realtimetrains.co.uk) token: Grok reads live departures, delays, cancellations, platforms and arrival times from Network Rail's running data instead of searching the web for them (see [UK train times (Realtime Trains)](#uk-train-times-realtime-trains))
 - **UK transit lookups**: prefers official National Rail / TOC sites for live times and disruptions (see [UK transit web sources](#uk-transit-web-sources)); open web for everything else
 - **GPS location** (on by default; optional — turn off in Settings): so you can ask things like *“find me transport from my current location to X”* without naming a station. Approximate coordinates/place are attached to the prompt when permission is granted; the model uses them with web search (National Rail, Thameslink, TfL, etc.) to plan from nearest stations/stops. Not required for general chat
 - Clean Jetpack Compose UI with MVVM architecture
@@ -100,6 +101,39 @@ Privacy and cost: most scans never leave the phone until you send them. Only whe
 Turn on **Debug mode** in Settings to see each retry (`RETRY 2/3 in 500ms …`) and the reason in the log screen.
 
 If it still fails: toggle Wi-Fi ↔ mobile data, check **Settings → Network → Private DNS** on the phone, or disable any VPN/ad-blocker that filters DNS.
+
+## UK train times (Realtime Trains)
+
+Web search is a poor source of live train times: departure boards are pages built by script, which search results rarely contain, so answers fell back on timetables and guesses. [Realtime Trains](https://www.realtimetrains.co.uk) publishes Network Rail's live running data through an API. With your own token, Grok asks it for exactly the board it needs.
+
+### Set it up
+
+1. Create a token at **[api-portal.rtt.io](https://api-portal.rtt.io)**. Either kind works: a long-life access token is used as it is; a refresh token is exchanged for a short-life access token automatically.
+2. In the app: **Settings → Chat → UK train times**, paste the token and tap **Save**. Saving also checks it with Realtime Trains and says whether it was accepted. **Check** tests it again later; **Clear** removes it.
+3. Ask about trains as you normally would: "next train from St Albans to St Pancras", "is the 17:40 to Sevenoaks running late?", "when does it get in?".
+
+Without a token, nothing changes: train questions are answered from web search as described under [UK transit web sources](#uk-transit-web-sources).
+
+### How it works
+
+The app gives Grok two tools of its own, offered only when a token is saved:
+
+| Tool | Realtime Trains endpoint | What Grok gets |
+| --- | --- | --- |
+| `uk_train_departures` | `GET https://data.rtt.io/gb-nr/location` | Departures from a station (CRS code, e.g. `SAC`), optionally only trains calling at or coming from another station, from a given time for up to 12 hours: scheduled and expected times, platform, status (on time, late *n* min, cancelled, departed), destination, operator, delay and cancellation reasons, and an id per train |
+| `uk_train_service` | `GET https://data.rtt.io/gb-nr/service` | Every stop of one train (by that id) with scheduled and expected arrival and departure times and platforms, which is how arrival times are answered |
+
+When Grok calls one, the chat shows **Checking live train times…**, the app makes the request with your token, and the result goes back to Grok as a short JSON summary in UK local time. Grok then answers from it and names Realtime Trains as the source. Up to four rounds of lookups are allowed per answer. Each one appears in the request timing line under **Settings → App → Logs**, for example `2 train lookups 640ms`.
+
+### Your token stays yours
+
+- **You enter your own token.** The app contains none, and none is in this repository or in any published APK.
+- **It is stored only on your phone**, in the app's private settings, which are excluded from cloud backup and device transfer.
+- **It is sent only to `https://data.rtt.io`**, as a bearer token over HTTPS. It is never sent to xAI or included in anything shared.
+
+Realtime Trains' API terms say: *"It is a requirement that no token is placed in a distributable user application unless specifically authorised by us. End-user applications are expected to proxy their requests through a server-side application such that token is not available publicly. If we identify a token is in a downstream user application, it will be revoked."* This app distributes no token: each person supplies their own, for their own use, on their own device. Whether that use suits Realtime Trains is between you and them; they say personal users of the API are supported through their community Discord.
+
+The API's base limits are 30 requests a minute, 750 an hour, 9,000 a day and 30,000 a week; a train question typically uses one to three.
 
 ## UK transit web sources
 

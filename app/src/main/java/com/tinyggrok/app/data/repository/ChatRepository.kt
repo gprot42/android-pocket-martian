@@ -15,6 +15,9 @@ import com.tinyggrok.app.data.model.InputMessage
 import com.tinyggrok.app.data.model.Message
 import com.tinyggrok.app.data.model.ResponseTool
 import com.tinyggrok.app.data.model.ResponsesRequest
+import com.tinyggrok.app.data.model.ResponsesUsage
+import com.tinyggrok.app.data.model.FunctionCallOutputItem
+import com.tinyggrok.app.data.model.FunctionCallItem
 import com.tinyggrok.app.data.model.ResponsesResponse
 import com.tinyggrok.app.data.model.ReasoningConfig
 import com.tinyggrok.app.data.model.TextContent
@@ -76,6 +79,9 @@ sealed class ChatProgress {
 
     /** The attempt was abandoned and restarted; discard anything shown so far. */
     object Restarted : ChatProgress()
+
+    /** Something worth telling the user while they wait, e.g. checking live train times. */
+    data class Status(val text: String) : ChatProgress()
 }
 
 data class ChatResult(
@@ -103,6 +109,7 @@ class ChatRepository @Inject constructor(
     private val apiService: XaiApiService,
     private val debugLogRepository: DebugLogRepository,
     private val okHttpClient: OkHttpClient,
+    private val trains: RealtimeTrainsRepository,
     @ApplicationContext private val context: Context
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -231,6 +238,8 @@ class ChatRepository @Inject constructor(
         }
         return try {
             val transitEnquiry = looksLikeTransitEnquiry(text)
+            // Live UK train times, when the user has entered their own Realtime Trains token.
+            val trainsAvailable = trains.hasToken()
             val formatInstructions = when (responseFormat) {
                 "html" -> "Respond using valid HTML markup only. Use tags like <p>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <h1>-<h3>, <table>, <blockquote> where appropriate. Do not wrap in <html> or <body> tags. Do not use markdown."
                 "markdown" -> "Respond using Markdown formatting. Use headers, bold, italic, code blocks, lists, tables where appropriate."
@@ -245,7 +254,20 @@ class ChatRepository @Inject constructor(
                 // The rail playbook is only sent for transit-looking prompts. Sending it on
                 // every turn added ~1k prompt tokens and nudged the model into web_search
                 // (and slow answers) for unrelated questions.
-                if (transitEnquiry) {
+                if (trainsAvailable) {
+                    append(" ")
+                    append(LIVE_TRAINS_INSTRUCTIONS)
+                }
+                if (transitEnquiry && trainsAvailable) {
+                    append(" ")
+                    append(
+                        "THIS USER MESSAGE IS A TRANSIT/RAIL ENQUIRY. Before answering, call " +
+                            "uk_train_departures for the live times that match it (and uk_train_service " +
+                            "for arrival times), and answer from those. Use web_search only for what " +
+                            "they cannot tell you. Include the National Rail link " +
+                            "https://www.nationalrail.co.uk for journey planning."
+                    )
+                } else if (transitEnquiry) {
                     append(" ")
                     // Hard requirements first — soft "prefer" lists alone are ignored by the model.
                     append(
@@ -351,7 +373,7 @@ class ChatRepository @Inject constructor(
                 model = AppDefaults.normalizeChatModel(model),
                 input = input,
                 instructions = instructions,
-                tools = listOf(ResponseTool(type = "web_search")),
+                tools = listOf(ResponseTool(type = "web_search")) + if (trainsAvailable) TRAIN_TOOLS else emptyList(),
                 // Slightly lower temperature for timetable / factual transit answers
                 temperature = if (transitEnquiry) 0.3 else 0.7,
                 // Thinking time dominates wall clock: the API defaults to "high", which
@@ -394,7 +416,7 @@ class ChatRepository @Inject constructor(
                 note("history", "${history.size} msgs ${"%,d".format(history.sumOf { flattenText(it).length })} chars")
             }
 
-            val call = try {
+            var call = try {
                 executeResponses(apiKey, request, debugMode, onProgress, timing)
             } catch (e: HttpException) {
                 val body = try { e.response()?.errorBody()?.string().orEmpty() } catch (_: Throwable) { "" }
@@ -440,32 +462,51 @@ class ChatRepository @Inject constructor(
                     )
                 }
             }
+            // Grok asked for live train times: fetch them, hand them back, let it carry on.
+            // The request is resent whole with the calls and results appended, because
+            // requests are not stored at xAI (store=false) to refer back to.
+            val allCitations = LinkedHashSet<String>(call.citations)
+            var searchedWeb = call.usedWebSearch
+            val usages = mutableListOf<ResponsesUsage>()
+            call.response?.usage?.let { usages += it }
+            var rounds = 0
+            while (call.functionCalls.isNotEmpty() && rounds < MAX_TOOL_ROUNDS) {
+                rounds++
+                onProgress?.invoke(ChatProgress.Status(TRAINS_STATUS))
+                val outputs = call.functionCalls.map { fc ->
+                    FunctionCallOutputItem(callId = fc.callId, output = runTool(fc, debugMode, timing))
+                }
+                request = request.copy(input = request.input + call.functionCalls + outputs)
+                call = executeResponses(apiKey, request, debugMode, onProgress, timing)
+                allCitations += call.citations
+                searchedWeb = searchedWeb || call.usedWebSearch
+                call.response?.usage?.let { usages += it }
+            }
             val response = call.response
             val baseMessage = response?.let { extractText(it) }.orEmpty()
                 .ifBlank { call.accumulatedText }
                 .ifBlank { "No response" }
             val citations = LinkedHashSet<String>().apply {
                 if (response != null) addAll(extractCitations(response))
-                addAll(call.citations)
+                addAll(allCitations)
             }.toList()
             val assistantMessage = if (responseFormat != "markdown") sanitizeHtml(baseMessage) else baseMessage
-            val usedWebSearch = call.usedWebSearch ||
+            val usedWebSearch = searchedWeb ||
                 response?.output?.any { it.type == "web_search_call" } == true ||
                 citations.isNotEmpty()
 
-            response?.usage?.let { u ->
-                timing?.note("tokens.in", u.inputTokens)
-                timing?.note("tokens.cached", u.inputDetails?.cachedTokens?.takeIf { it > 0 })
-                timing?.note("tokens.out", u.outputTokens)
-                timing?.note("tokens.reasoning", u.outputDetails?.reasoningTokens?.takeIf { it > 0 })
+            // Every round is billed, so cost and timing count them all.
+            if (usages.isNotEmpty()) {
+                timing?.note("tokens.in", usages.sumOf { it.inputTokens })
+                timing?.note("tokens.cached", usages.sumOf { it.inputDetails?.cachedTokens ?: 0 }.takeIf { it > 0 })
+                timing?.note("tokens.out", usages.sumOf { it.outputTokens })
+                timing?.note("tokens.reasoning", usages.sumOf { it.outputDetails?.reasoningTokens ?: 0 }.takeIf { it > 0 })
             }
 
-            val usage = response?.usage?.let {
-                Usage(
-                    prompt_tokens = it.inputTokens,
-                    completion_tokens = it.outputTokens,
-                    total_tokens = if (it.totalTokens > 0) it.totalTokens else it.inputTokens + it.outputTokens
-                )
+            val usage = usages.takeIf { it.isNotEmpty() }?.let { all ->
+                val inTokens = all.sumOf { it.inputTokens }
+                val outTokens = all.sumOf { it.outputTokens }
+                Usage(prompt_tokens = inTokens, completion_tokens = outTokens, total_tokens = inTokens + outTokens)
             }
 
             if (debugMode) {
@@ -541,7 +582,8 @@ class ChatRepository @Inject constructor(
         val response: ResponsesResponse?,
         val accumulatedText: String,
         val citations: List<String>,
-        val usedWebSearch: Boolean
+        val usedWebSearch: Boolean,
+        val functionCalls: List<FunctionCallItem> = emptyList()
     )
 
     /**
@@ -590,6 +632,33 @@ class ChatRepository @Inject constructor(
                 delay(wait)
             }
         }
+    }
+
+    /** Run one of the app's own tools for the model and return its result as text. */
+    private suspend fun runTool(call: FunctionCallItem, debugMode: Boolean, timing: SendTiming?): String {
+        val args = runCatching { com.google.gson.JsonParser.parseString(call.arguments).asJsonObject }.getOrNull()
+        fun arg(name: String) = args?.get(name)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
+        val started = System.nanoTime()
+        val result = when (call.name) {
+            "uk_train_departures" -> arg("station")?.let { station ->
+                trains.departures(
+                    station = station,
+                    callingAt = arg("calling_at"),
+                    comingFrom = arg("coming_from"),
+                    time = arg("time"),
+                    windowMinutes = arg("window_minutes")?.toDoubleOrNull()?.toInt()
+                )
+            } ?: """{"error":"station is required"}"""
+            "uk_train_service" -> arg("id")?.let { trains.service(it) } ?: """{"error":"id is required"}"""
+            else -> """{"error":"unknown tool ${call.name}"}"""
+        }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        timing?.trainLookup(ms)
+        if (debugMode) {
+            debugLogRepository.logOutgoing(summary = "TOOL ${call.name} (${ms}ms)", body = call.arguments)
+            debugLogRepository.logIncoming(summary = "TOOL ${call.name} result", body = result.take(4000))
+        }
+        return result
     }
 
     private fun logRetry(
@@ -705,7 +774,8 @@ class ChatRepository @Inject constructor(
                 response = parsed.completed,
                 accumulatedText = parsed.accumulatedText,
                 citations = parsed.citations,
-                usedWebSearch = parsed.usedWebSearch
+                usedWebSearch = parsed.usedWebSearch,
+                functionCalls = parsed.functionCalls
             )
         }
         } finally {
@@ -868,9 +938,59 @@ class ChatRepository @Inject constructor(
     }
 }
 
+/** Shown while the app fetches live train times for Grok. */
+internal const val TRAINS_STATUS = "Checking live train times\u2026"
+
+/** Rounds of tool calls allowed in one answer, so a confused model cannot loop. */
+internal const val MAX_TOOL_ROUNDS = 4
+
+internal const val LIVE_TRAINS_INSTRUCTIONS =
+    "LIVE UK TRAIN TIMES: you have the tools uk_train_departures and uk_train_service, which read " +
+        "Realtime Trains live data (Network Rail's own running data). For any UK train times, next " +
+        "trains, delays, cancellations or platforms, call them instead of searching the web, and give " +
+        "the times they return (UK local time). Use station CRS codes. Use web_search only for what " +
+        "they cannot tell you (fares, engineering works notices, planning journeys with changes). " +
+        "Name Realtime Trains as the source of live times."
+
+private fun schema(json: String) = com.google.gson.JsonParser.parseString(json)
+
+/** The app's own tools, offered when the user has a Realtime Trains token. */
+internal val TRAIN_TOOLS = listOf(
+    ResponseTool(
+        type = "function",
+        name = "uk_train_departures",
+        description = "Live departures from a UK National Rail station from Realtime Trains: scheduled " +
+            "and expected times, platform, delays, cancellations and their reasons. Stations are CRS " +
+            "codes, e.g. SAC St Albans City, STP London St Pancras International, KGX London Kings " +
+            "Cross, EUS London Euston, LUT Luton, HPD Harpenden. Each train has an id for uk_train_service.",
+        parameters = schema(
+            """{"type":"object","properties":{
+                "station":{"type":"string","description":"CRS code of the station to depart from, e.g. SAC"},
+                "calling_at":{"type":"string","description":"Only trains that later call at this CRS code, e.g. STP"},
+                "coming_from":{"type":"string","description":"Only trains that earlier called at this CRS code"},
+                "time":{"type":"string","description":"Start of the window in UK time: HH:mm today, or YYYY-MM-DDTHH:mm. Default now."},
+                "window_minutes":{"type":"integer","description":"Length of the window in minutes, 15 to 720. Default 120."}
+            },"required":["station"]}"""
+        )
+    ),
+    ResponseTool(
+        type = "function",
+        name = "uk_train_service",
+        description = "Every stop of one train from Realtime Trains, with scheduled and expected arrival " +
+            "and departure times and platforms. Use with an id from uk_train_departures, e.g. to give " +
+            "the arrival time at the destination.",
+        parameters = schema(
+            """{"type":"object","properties":{
+                "id":{"type":"string","description":"The id of a train from uk_train_departures"}
+            },"required":["id"]}"""
+        )
+    )
+)
+
 /** Replace image data-URLs with a length placeholder so debug logs stay small. */
 internal fun redactImagesForLog(request: ResponsesRequest): ResponsesRequest {
-    val redactedInput = request.input.map { msg ->
+    val redactedInput = request.input.map { item ->
+        val msg = item as? InputMessage ?: return@map item
         val content = msg.content
         if (content is List<*>) {
             val parts = content.map { part ->

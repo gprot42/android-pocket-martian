@@ -19,8 +19,8 @@ android {
         applicationId = "com.tinyggrok.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.0.38"
+        versionCode = 39
+        versionName = "0.0.39"
 
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'", Locale.US)
             .apply { timeZone = TimeZone.getTimeZone("UTC") }

@@ -697,6 +697,9 @@ class ChatViewModel @Inject constructor(
                                 _uiState.value = _uiState.value.copy(streamingStatus = SEARCH_STATUS)
                             }
                         }
+                        is ChatProgress.Status -> {
+                            _uiState.value = _uiState.value.copy(streamingStatus = progress.text)
+                        }
                         is ChatProgress.Restarted -> {
                             streamed.setLength(0)
                             lastUiUpdate = 0L
