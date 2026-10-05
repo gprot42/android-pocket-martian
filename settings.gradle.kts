@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TinyGrok"
+rootProject.name = "PocketMartian"
 include(":app")

@@ -2,7 +2,7 @@
 
 A lightweight native Android app for chatting with xAI's Grok models.
 
-*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. This app was called Tiny Ggrok until 0.0.41; it is now **Pocket Martian**, a name that nods to that origin without borrowing xAI's mark. The repository moved with it, from `android-tiny-ggrok` to `android-pocket-martian`; GitHub redirects the old address, so older versions still find their updates. The app's package (`com.tinyggrok.app`), signing key, settings and saved chats are unchanged, so updates install over the old version as before.
+*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. This app was called Tiny Ggrok until 0.0.41; it is now **Pocket Martian**, a name that nods to that origin without borrowing xAI's mark. The repository moved with it, from `android-tiny-ggrok` to `android-pocket-martian`; GitHub redirects the old address, so older versions still find their updates. The package name changed too, from `com.tinyggrok.app` to `com.pocketmartian.app`, so Android treats Pocket Martian as a new app: it installs alongside Tiny Ggrok rather than over it. Enter your xAI key (and Realtime Trains token, if you use one) again in Pocket Martian, then uninstall Tiny Ggrok. Saved chats do not carry over.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Pocket Martian chat" width="280">
@@ -35,7 +35,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - **Answers survive the app closing**: the conversation and any half-typed prompt are kept on the phone (app-private storage, excluded from cloud backup) and come back when the app reopens, whether it was closed by a crash or by Android reclaiming memory. **Clear** removes the saved copy too. About shows why the app last stopped (Android 11+)
 - **Very long answers no longer crash the app**: Compose cannot lay out anything taller than 262,143 px, and an answer's height was passed to it unchecked. Two real crashes were exactly that (`Can't represent a width of 0 and height of 434309 in Constraints`). Answers are now capped at 200,000 px, about 3,000 lines, with a note pointing to the answer's own Copy and Share buttons for the rest
 - **Scrolling during a reply**: scrolling up while an answer streams in now stays put. Follow-the-bottom is switched back on when you send, not on every streamed word
-- **Updates from GitHub**: once a day the app checks this repository's latest release and offers it in a banner (**Not now** hides it for that version). **Settings → App updates** checks on demand or turns the daily check off. Install downloads the universal APK and hands it to Android's installer, which asks you to confirm, and first to allow Pocket Martian to install apps. Android refuses any file not signed with the same key as the installed app
+- **Updates from GitHub**: once a day the app checks this repository's latest release and offers it in a banner (**Not now** hides it for that version). **Settings → App updates** checks on demand or turns the daily check off. Install downloads the universal APK and hands it to Android's installer, which asks you to confirm, and first to allow Pocket Martian to install apps. Android refuses any file not signed with the same key as the installed app. The Google Play version leaves this out and is updated by Play, as Play requires
 - **Never stuck waiting**: **Stop** cancels a reply that is taking too long, typing while a reply arrives queues your next prompt (it sends itself when the current one lands), and **Clear** also stops anything in flight
 - **Live replies**: the answer streams onto the screen as Grok writes it, with a **Searching the web** status while it looks things up, instead of a motionless indicator until the whole reply lands
 - **Reasoning effort tuned per question**: ordinary questions use `low` effort (the API default is `high`, which spends tens of seconds thinking before the first token); rail/transit questions keep `high`. Agentic tool turns are capped so a vague question cannot loop through searches indefinitely
@@ -259,6 +259,9 @@ A SuperGrok Heavy subscription **does not** fund this app. If you see “out of 
 ./build.sh
 ```
 
+### GitHub and Google Play versions
+There are two versions of the app, `github` (what `./build.sh` makes, with its own update check) and `play` (no update check and no install permission, because Play forbids apps updating themselves). Both are `com.pocketmartian.app` signed with the same key.
+
 ### Build and Run in Emulator
 ```bash
 ./build.sh --emulate
@@ -291,6 +294,6 @@ Follows the plan in PLAN.md: Hilt DI, Retrofit for API, DataStore for settings, 
 MIT - For personal/educational use.
 
 ## Notes
-- Package renamed from com.aicoder to com.tinygrok.client
+- Package renamed from com.aicoder to com.tinygrok.client, then com.tinyggrok.app, and since 0.0.41 com.pocketmartian.app
 - API key never logged or exposed
 - Tokyo Night theme uses authentic colors from the popular VSCode theme

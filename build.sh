@@ -12,7 +12,7 @@ cd "$ROOT"
 
 VERSION="$(grep -E 'versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
 VERSION="${VERSION:-0.0.0}"
-APP_ID="com.tinyggrok.app"
+APP_ID="com.pocketmartian.app"
 AVD_NAME="${AVD_NAME:-Pixel_4_API_34}"
 
 BUILD_TYPE="release"
@@ -45,15 +45,15 @@ else
 fi
 
 if [[ "$BUILD_TYPE" == "release" ]]; then
-  TASK=":app:assembleRelease"
-  APK_DIR="app/build/outputs/apk/release"
-  APK_GLOB="app-*-release.apk"
-  PREFERRED="app-universal-release.apk"
+  TASK=":app:assembleGithubRelease"
+  APK_DIR="app/build/outputs/apk/github/release"
+  APK_GLOB="app-github-*-release.apk"
+  PREFERRED="app-github-universal-release.apk"
 else
-  TASK=":app:assembleDebug"
-  APK_DIR="app/build/outputs/apk/debug"
-  APK_GLOB="app-*-debug.apk"
-  PREFERRED="app-universal-debug.apk"
+  TASK=":app:assembleGithubDebug"
+  APK_DIR="app/build/outputs/apk/github/debug"
+  APK_GLOB="app-github-*-debug.apk"
+  PREFERRED="app-github-universal-debug.apk"
 fi
 
 echo "==> Building ($BUILD_TYPE)…"
@@ -65,7 +65,7 @@ if [[ -f "$APK_DIR/$PREFERRED" ]]; then
   SRC="$APK_DIR/$PREFERRED"
 else
   # Fallback: plain app-release.apk / app-debug.apk (no splits)
-  PLAIN="app/build/outputs/apk/${BUILD_TYPE}/app-${BUILD_TYPE}.apk"
+  PLAIN="$APK_DIR/app-github-${BUILD_TYPE}.apk"
   if [[ -f "$PLAIN" ]]; then
     SRC="$PLAIN"
   else
@@ -79,7 +79,7 @@ fi
 
 BASENAME="$(basename "$SRC")"
 # root name: pocket-martian-0.0.1-universal-release.apk (or whatever the built file is)
-OUT_NAME="pocket-martian-${VERSION}-${BASENAME#app-}"
+OUT_NAME="pocket-martian-${VERSION}-${BASENAME#app-github-}"
 DEST="$ROOT/$OUT_NAME"
 
 cp -f "$SRC" "$DEST"

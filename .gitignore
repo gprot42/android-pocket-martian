@@ -107,3 +107,7 @@ Thumbs.db
 # Local backup copies only (keep build.gradle.kts and build.sh tracked)
 *.bak
 
+
+# Play: app bundles and the publishing key, which live outside the repo
+*.aab
+play-service-account*.json

@@ -12,13 +12,13 @@ plugins {
 }
 
 android {
-    namespace = "com.tinyggrok.app"
-    compileSdk = 35
+    namespace = "com.pocketmartian.app"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.tinyggrok.app"
+        applicationId = "com.pocketmartian.app"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 41
         versionName = "0.0.41"
 
@@ -33,6 +33,26 @@ android {
         }
     }
 
+    // The release key, from ~/.gradle/gradle.properties (or POCKET_MARTIAN_* environment
+    // variables), never from this repository.
+    val releaseKey = listOf("STORE_FILE", "STORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
+        .associateWith { name ->
+            (findProperty("pocketMartian.${name.lowercase()}") as String?)
+                ?: System.getenv("POCKET_MARTIAN_$name")
+        }
+    val hasReleaseKey = releaseKey.values.all { !it.isNullOrBlank() }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = file(releaseKey.getValue("STORE_FILE")!!)
+                storePassword = releaseKey.getValue("STORE_PASSWORD")
+                keyAlias = releaseKey.getValue("KEY_ALIAS")
+                keyPassword = releaseKey.getValue("KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -40,10 +60,25 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Sign release builds with the Android debug keystore so we can install on
-            // devices without a production signing setup. Replace with a proper config
-            // before publishing.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without the release key this falls back to the debug keystore, which still
+            // installs on a phone but which Google Play refuses.
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+        }
+    }
+
+    // Where the app is distributed. Both are the same app (same package, same key), but
+    // Google Play forbids an app updating itself outside Play, so only the GitHub build
+    // checks GitHub releases and holds the permission to hand an APK to the installer.
+    flavorDimensions += "store"
+    productFlavors {
+        create("github") {
+            dimension = "store"
+            isDefault = true
+            buildConfigField("boolean", "GITHUB_UPDATES", "true")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "GITHUB_UPDATES", "false")
         }
     }
 
