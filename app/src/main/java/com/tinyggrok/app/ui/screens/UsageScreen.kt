@@ -462,7 +462,7 @@ private fun SuperGrokCard(
                         Text("• Highest consumer tier on grok.com / X (~\$300/mo)")
                         Text("• Priority access to frontier models & Heavy / multi-agent modes")
                         Text("• Higher rate limits than SuperGrok — still subject to fair-use windows")
-                        Text("• Does not fund Tiny Ggrok or console.x.ai API prepaid credits")
+                        Text("• Does not fund Pocket Martian or console.x.ai API prepaid credits")
                     }
                 }
             }

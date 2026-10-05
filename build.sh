@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build TinyGrok APK and copy it to the project root.
+# Build the Pocket Martian APK and copy it to the project root.
 #
 # Usage:
-#   ./build.sh              # release APK → ./tiny-ggrok-<version>-universal.apk
+#   ./build.sh              # release APK → ./pocket-martian-<version>-universal.apk
 #   ./build.sh --debug      # debug APK (no ABI splits path if missing → assembleDebug)
 #   ./build.sh --emulate    # debug build, install & launch on emulator
 set -euo pipefail
@@ -78,8 +78,8 @@ else
 fi
 
 BASENAME="$(basename "$SRC")"
-# root name: tiny-ggrok-0.0.1-universal-release.apk (or whatever the built file is)
-OUT_NAME="tiny-ggrok-${VERSION}-${BASENAME#app-}"
+# root name: pocket-martian-0.0.1-universal-release.apk (or whatever the built file is)
+OUT_NAME="pocket-martian-${VERSION}-${BASENAME#app-}"
 DEST="$ROOT/$OUT_NAME"
 
 cp -f "$SRC" "$DEST"

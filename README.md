@@ -1,9 +1,11 @@
-# Tiny Grok - Android Client
+# Pocket Martian - Android Client
 
 A lightweight native Android app for chatting with xAI's Grok models.
 
+*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. This app was called Tiny Ggrok until 0.0.41; it is now **Pocket Martian**, a name that nods to that origin without borrowing xAI's mark. The repository moved with it, from `android-tiny-ggrok` to `android-pocket-martian`; GitHub redirects the old address, so older versions still find their updates. The app's package (`com.tinyggrok.app`), signing key, settings and saved chats are unchanged, so updates install over the old version as before.
+
 <p align="center">
-  <img src="docs/screenshot.png" alt="Tiny Ggrok chat" width="280">
+  <img src="docs/screenshot.png" alt="Pocket Martian chat" width="280">
 </p>
 
 ## Features
@@ -20,7 +22,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - **GPS location** (on by default; optional — turn off in Settings): so you can ask things like *“find me transport from my current location to X”* without naming a station. Approximate coordinates/place are attached to the prompt when permission is granted; the model uses them with web search (National Rail, Thameslink, TfL, etc.) to plan from nearest stations/stops. Not required for general chat
 - Clean Jetpack Compose UI with MVVM architecture
 - Chat with message history (in-memory for now) plus response history screen
-- **Share to Tiny Ggrok**: from any app, share text, links, or images into the chat prompt (also in the text-selection menu as **Ask Tiny Ggrok**). Share a Grok reply or the whole conversation back out via the system share sheet
+- **Share to Pocket Martian**: from any app, share text, links, or images into the chat prompt (also in the text-selection menu as **Ask Pocket Martian**). Share a Grok reply or the whole conversation back out via the system share sheet
 - Pinch-to-zoom on the whole chat screen
 - Image attach on prompts
 - Voice translator (optional, Grok Voice API)
@@ -33,7 +35,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - **Answers survive the app closing**: the conversation and any half-typed prompt are kept on the phone (app-private storage, excluded from cloud backup) and come back when the app reopens, whether it was closed by a crash or by Android reclaiming memory. **Clear** removes the saved copy too. About shows why the app last stopped (Android 11+)
 - **Very long answers no longer crash the app**: Compose cannot lay out anything taller than 262,143 px, and an answer's height was passed to it unchecked. Two real crashes were exactly that (`Can't represent a width of 0 and height of 434309 in Constraints`). Answers are now capped at 200,000 px, about 3,000 lines, with a note pointing to the answer's own Copy and Share buttons for the rest
 - **Scrolling during a reply**: scrolling up while an answer streams in now stays put. Follow-the-bottom is switched back on when you send, not on every streamed word
-- **Updates from GitHub**: once a day the app checks this repository's latest release and offers it in a banner (**Not now** hides it for that version). **Settings → App updates** checks on demand or turns the daily check off. Install downloads the universal APK and hands it to Android's installer, which asks you to confirm, and first to allow Tiny Ggrok to install apps. Android refuses any file not signed with the same key as the installed app
+- **Updates from GitHub**: once a day the app checks this repository's latest release and offers it in a banner (**Not now** hides it for that version). **Settings → App updates** checks on demand or turns the daily check off. Install downloads the universal APK and hands it to Android's installer, which asks you to confirm, and first to allow Pocket Martian to install apps. Android refuses any file not signed with the same key as the installed app
 - **Never stuck waiting**: **Stop** cancels a reply that is taking too long, typing while a reply arrives queues your next prompt (it sends itself when the current one lands), and **Clear** also stops anything in flight
 - **Live replies**: the answer streams onto the screen as Grok writes it, with a **Searching the web** status while it looks things up, instead of a motionless indicator until the whole reply lands
 - **Reasoning effort tuned per question**: ordinary questions use `low` effort (the API default is `high`, which spends tens of seconds thinking before the first token); rail/transit questions keep `high`. Agentic tool turns are capped so a vague question cannot loop through searches indefinitely
@@ -54,7 +56,7 @@ This was established the hard way: a user's scan was mush while their camera-app
 
 The scanner shows the facts it is working with, for example `Photo 4080 × 3072 · page about 2100 × 2900 px`, so you can see at a glance whether to move closer. For a sharp scan, fill the frame with the page: detail that was never captured cannot be recovered. If a page ever has to be produced from the reduced preview instead of the original photo, the scanner says so rather than failing quietly, and with Debug mode on each save is recorded in the log with its size and how it was produced.
 
-1. **Capture** uses a plain camera intent, so any camera app works (including on de-Googled phones) and Tiny Ggrok needs no camera permission.
+1. **Capture** uses a plain camera intent, so any camera app works (including on de-Googled phones) and Pocket Martian needs no camera permission.
 2. **Find the page, on the phone first.** A light page on a darker surface, or the reverse, is located in milliseconds with no network: shrink and median-filter the photo until texture and print drop out, split it into two brightness classes, and reduce a region's outline to four corners. Which class is the page is deliberately not decided up front. Every rule tried for that failed somewhere: "the page is whatever the photo's border is not made of" breaks the moment a page fills the frame and runs off a side, which is exactly what a sharp scan needs, and "the page is whatever is in the middle" turns a bare carpet into a full-frame page. So both readings are proposed and the edge check decides, because only a real page is bounded by straight paper edges. Every side must be either confirmed on a real paper edge or lie along the photo's border where the page runs out of frame, with at least one real side. That rejects a tidy-looking shape produced by uneven lighting, and a bare surface.
 
    **Repair, don't reject.** Anything bright touching the page, such as a hand holding it, a cloth or a second sheet, merges with it in the brightness split, and the proposed side there runs through the clutter instead of along the paper. Rather than discard an outline that is right on three sides, the unconfirmed side is searched for: a trial line is walked inward from where it was proposed, held parallel to the confirmed opposite side, until a real paper edge is confirmed.
@@ -241,7 +243,7 @@ Devices and emulators on API 24 and above are supported. Location features need 
 
 ### SuperGrok vs API credits (common confusion)
 
-**Tiny Grok is not the official Grok app.** It talks to `https://api.x.ai` with the API key you paste in Settings.
+**Pocket Martian is not the official Grok app.** It talks to `https://api.x.ai` with the API key you paste in Settings.
 
 | Product | Where | What it pays for |
 | --- | --- | --- |

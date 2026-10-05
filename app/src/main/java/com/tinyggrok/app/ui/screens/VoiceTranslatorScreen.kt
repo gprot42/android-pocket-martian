@@ -171,7 +171,7 @@ fun VoiceTranslatorScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            "Tiny Ggrok Voice Translator turns your spoken words into translated speech in real time.",
+                            "Pocket Martian Voice Translator turns your spoken words into translated speech in real time.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         HorizontalDivider()

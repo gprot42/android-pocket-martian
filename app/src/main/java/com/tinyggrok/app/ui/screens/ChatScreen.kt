@@ -218,7 +218,7 @@ fun ChatScreen(
         if (granted) {
             viewModel.startDictation()
         } else {
-            Toast.makeText(context, "Tiny Ggrok needs the microphone to take dictation.", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Pocket Martian needs the microphone to take dictation.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -428,12 +428,12 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("Tiny Ggrok", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Pocket Martian", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 actions = {
                     // Icons only, all the same size and weight: the bar used to mix words
                     // and an icon, and at large text sizes the words pushed the title into
-                    // "Tiny Ggr...". Everything used less often lives in the menu.
+                    // "Tiny Ggr..." (the app's old name). Everything used less often lives in the menu.
                     IconButton(onClick = { startNewChat() }, enabled = uiState.messages.isNotEmpty()) {
                         Icon(Icons.Outlined.AddComment, contentDescription = "New chat")
                     }
@@ -1655,7 +1655,7 @@ private fun UpdateBanner(
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Tiny Ggrok $version is available",
+                    "Pocket Martian $version is available",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                     modifier = Modifier.weight(1f)

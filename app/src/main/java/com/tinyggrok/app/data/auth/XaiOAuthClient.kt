@@ -21,7 +21,7 @@ import javax.inject.Singleton
  * Uses the same public OIDC client family as Grok Build (`auth.x.ai`, grant
  * `urn:ietf:params:oauth:grant-type:device_code`, auth method `none`).
  *
- * This is **not** an official Tiny Grok entitlement API. xAI may still bill or
+ * This is **not** an official xAI entitlement API. xAI may still bill or
  * gate usage separately from SuperGrok Heavy consumer chat.
  */
 @Singleton

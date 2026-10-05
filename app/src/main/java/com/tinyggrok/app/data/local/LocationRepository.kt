@@ -372,7 +372,7 @@ class LocationRepository @Inject constructor(
             override fun onProviderDisabled(provider: String) {}
         }
 
-        val thread = HandlerThread("tiny-ggrok-gps").apply { start() }
+        val thread = HandlerThread("pocket-martian-gps").apply { start() }
         val looper = thread.looper
         val executor = Executor { command -> Handler(looper).post(command) }
 

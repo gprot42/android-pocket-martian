@@ -354,7 +354,7 @@ internal fun ColumnScope.AccountSettings(
     SettingsSection(title = "SuperGrok", icon = Icons.AutoMirrored.Filled.Login) {
         Text(
             "Device-code login via auth.x.ai (same OIDC family as Grok Build). " +
-                "Experimental — not an official Tiny Grok entitlement.",
+                "Experimental — not an official xAI entitlement.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

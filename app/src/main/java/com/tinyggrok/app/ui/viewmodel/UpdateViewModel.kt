@@ -117,7 +117,7 @@ class UpdateViewModel @Inject constructor(
             !context.packageManager.canRequestPackageInstalls()
         ) {
             _state.value = _state.value.copy(
-                message = "Allow Tiny Ggrok to install apps, then tap Install again."
+                message = "Allow Pocket Martian to install apps, then tap Install again."
             )
             context.startActivity(
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))

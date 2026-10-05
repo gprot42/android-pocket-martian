@@ -53,7 +53,7 @@ class AppUpdateRepository @Inject constructor(
                 val request = Request.Builder()
                     .url(LATEST_RELEASE_URL)
                     .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "TinyGgrok/$currentVersion")
+                    .header("User-Agent", "PocketMartian/$currentVersion")
                     .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
@@ -82,10 +82,10 @@ class AppUpdateRepository @Inject constructor(
             val directory = File(context.cacheDir, UPDATE_DIR).apply { mkdirs() }
             // One build at a time: a half-finished earlier download is of no use.
             directory.listFiles()?.forEach { it.delete() }
-            val target = File(directory, "tiny-ggrok-${update.versionName}.apk")
+            val target = File(directory, "pocket-martian-${update.versionName}.apk")
 
             val request = Request.Builder().url(update.downloadUrl)
-                .header("User-Agent", "TinyGgrok/${BuildConfig.VERSION_NAME}")
+                .header("User-Agent", "PocketMartian/${BuildConfig.VERSION_NAME}")
                 .build()
             okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body ?: throw IllegalStateException("Empty download")
@@ -123,7 +123,7 @@ class AppUpdateRepository @Inject constructor(
     private companion object {
         const val TAG = "AppUpdateRepository"
         const val LATEST_RELEASE_URL =
-            "https://api.github.com/repos/gprot42/android-tiny-ggrok/releases/latest"
+            "https://api.github.com/repos/gprot42/android-pocket-martian/releases/latest"
         const val UPDATE_DIR = "updates"
     }
 }

@@ -48,7 +48,7 @@ fun AboutScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Tiny Ggrok", style = MaterialTheme.typography.headlineMedium)
+            Text("Pocket Martian", style = MaterialTheme.typography.headlineMedium)
             Text(
                 "A minimal Android client for xAI's Grok chat completions API.",
                 style = MaterialTheme.typography.bodyMedium

@@ -65,7 +65,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
-            <!-- Text-selection overflow: "Ask Tiny Ggrok" -->
+            <!-- Text-selection overflow: "Ask Pocket Martian" -->
             <intent-filter android:label="@string/process_text_label">
                 <action android:name="android.intent.action.PROCESS_TEXT" />
                 <category android:name="android.intent.category.DEFAULT" />
