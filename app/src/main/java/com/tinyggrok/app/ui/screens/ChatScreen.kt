@@ -1,5 +1,32 @@
 package com.tinyggrok.app.ui.screens
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import kotlinx.coroutines.launch
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.AddComment
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.automirrored.filled.ScheduleSend
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.foundation.layout.wrapContentWidth
 import com.tinyggrok.app.ui.viewmodel.Dictation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.filled.Stop
@@ -216,6 +243,11 @@ fun ChatScreen(
     }
 
     var lensMenuOpen by remember { mutableStateOf(false) }
+    var moreMenuOpen by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+
 
     // Align a photo that already exists: pictures taken with the full camera app are
     // often far better than a quick capture.
@@ -277,6 +309,32 @@ fun ChatScreen(
             )
         } else {
             viewModel.sendPrompt()
+        }
+    }
+
+    fun shareConversation() {
+        val text = formatConversationForShare(uiState.messages.map { it.role to shareableMessageText(it) })
+        startPlainTextShare(context, text, "Share conversation")
+    }
+
+    fun resendLastPrompt() {
+        val last = uiState.lastSentPrompt
+        if (last.isNotBlank() && !uiState.isSending) {
+            viewModel.updatePrompt(last)
+            sendWithOptionalLocationPermission()
+        }
+    }
+
+    /** Clear the chat, with a moment to take it back. */
+    fun startNewChat() {
+        viewModel.startNewChat()
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Started a new chat",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.undoNewChat()
         }
     }
 
@@ -365,18 +423,19 @@ fun ChatScreen(
         modifier = Modifier
             .fillMaxSize()
             .imePadding(),
+        // Lifted clear of the composer, which is part of the content rather than a bottom bar.
+        snackbarHost = { SnackbarHost(snackbarHostState, modifier = Modifier.padding(bottom = 92.dp)) },
         topBar = {
             TopAppBar(
                 title = {
-                    // The bar can get crowded (Clear and Logs come and go); let the title
-                    // give way gracefully instead of wrapping or clipping mid-letter.
                     Text("Tiny Ggrok", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 actions = {
-                    if (uiState.messages.isNotEmpty()) {
-                        TextButton(onClick = viewModel::clearMessages) {
-                            Text("Clear")
-                        }
+                    // Icons only, all the same size and weight: the bar used to mix words
+                    // and an icon, and at large text sizes the words pushed the title into
+                    // "Tiny Ggr...". Everything used less often lives in the menu.
+                    IconButton(onClick = { startNewChat() }, enabled = uiState.messages.isNotEmpty()) {
+                        Icon(Icons.Outlined.AddComment, contentDescription = "New chat")
                     }
                     // The lens: scan a document. Up here with Voice, the app's other
                     // capture feature, and well away from the prompt box.
@@ -390,12 +449,7 @@ fun ChatScreen(
                         IconButton(onClick = { lensMenuOpen = true }, enabled = canScan) {
                             Icon(
                                 imageVector = Icons.Outlined.DocumentScanner,
-                                contentDescription = "Scan a document",
-                                tint = if (canScan) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.outline
-                                }
+                                contentDescription = "Scan a document"
                             )
                         }
                         DropdownMenu(
@@ -436,16 +490,50 @@ fun ChatScreen(
                             )
                         }
                     }
-                    TextButton(onClick = onNavigateToVoiceTranslator) {
-                        Text("Voice")
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                     }
-                    if (uiState.debugMode) {
-                        TextButton(onClick = onNavigateToDebugLogs) {
-                            Text("Logs")
+                    Box {
+                        IconButton(onClick = { moreMenuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More")
                         }
-                    }
-                    TextButton(onClick = onNavigateToSettings) {
-                        Text("Settings")
+                        DropdownMenu(expanded = moreMenuOpen, onDismissRequest = { moreMenuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Voice translator") },
+                                leadingIcon = { Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null) },
+                                onClick = { moreMenuOpen = false; onNavigateToVoiceTranslator() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("History") },
+                                leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
+                                onClick = { moreMenuOpen = false; onNavigateToHistory() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share conversation") },
+                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                enabled = uiState.messages.isNotEmpty(),
+                                onClick = { moreMenuOpen = false; shareConversation() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Resend last prompt") },
+                                leadingIcon = { Icon(Icons.Outlined.Replay, contentDescription = null) },
+                                enabled = uiState.lastSentPrompt.isNotBlank() && !uiState.isSending,
+                                onClick = { moreMenuOpen = false; resendLastPrompt() }
+                            )
+                            if (uiState.prompt.isNotEmpty() || uiState.hasAttachedImages) {
+                                DropdownMenuItem(
+                                    text = { Text("Clear what I typed") },
+                                    leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                                    onClick = { moreMenuOpen = false; viewModel.clearPrompt() }
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Logs") },
+                                leadingIcon = { Icon(Icons.Outlined.Timer, contentDescription = null) },
+                                onClick = { moreMenuOpen = false; onNavigateToDebugLogs() }
+                            )
+                        }
                     }
                 }
             )
@@ -522,7 +610,23 @@ fun ChatScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Ask Grok something, or attach an image.")
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Outlined.ChatBubbleOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("Ask Grok anything", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Type or speak, attach a photo, or scan a document.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 Box(
@@ -575,9 +679,13 @@ fun ChatScreen(
             }
 
             uiState.errorMessage?.let { error ->
-                Text(
-                    text = error,
-                    color = MaterialTheme.colorScheme.error
+                ErrorCard(
+                    message = error,
+                    // Retry is what Resend was mostly for, so it sits where it is needed.
+                    canRetry = uiState.lastSentPrompt.isNotBlank() && !uiState.isSending &&
+                        uiState.prompt.isBlank(),
+                    onRetry = { resendLastPrompt() },
+                    onDismiss = viewModel::dismissError
                 )
             }
 
@@ -596,27 +704,58 @@ fun ChatScreen(
                 )
             }
 
-            // Prompt stays editable while a reply is in flight so the user can draft
-            // the next question. Send/Resend stay disabled until the current request finishes.
+            if (uiState.dictation != Dictation.IDLE) {
+                DictationRow(
+                    state = uiState.dictation,
+                    seconds = uiState.dictationSeconds,
+                    onFinish = viewModel::finishDictation,
+                    onCancel = viewModel::cancelDictation
+                )
+            }
+
+            // The composer: one rounded field holding attach and the microphone, and one
+            // round button beside it that sends, queues or stops. It replaces a row of five
+            // text buttons under the field (History, Share, Copy, Resend, Clear) that clipped
+            // at large text sizes and sat greyed out most of the time; those now live in the
+            // top bar's menu, on each message, or, for Resend, on the error that needs it.
+            // The prompt stays editable while a reply is arriving, to draft the next one.
             val canAttach = uiState.attachedImages.size < MAX_ATTACHED_IMAGES
-            OutlinedTextField(
-                value = uiState.prompt,
-                onValueChange = viewModel::updatePrompt,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                label = {
-                    Text(
-                        when {
-                            uiState.queuedPrompt != null -> "Next prompt (1 queued)"
-                            uiState.isSending -> "Next prompt (send to queue it)"
-                            else -> "Prompt"
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextField(
+                    value = uiState.prompt,
+                    onValueChange = viewModel::updatePrompt,
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            when {
+                                uiState.queuedPrompt != null -> "Next prompt (1 queued)"
+                                uiState.isSending -> "Type the next prompt\u2026"
+                                else -> "Ask Grok\u2026"
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    minLines = 1,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(28.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    leadingIcon = {
+                        IconButton(onClick = { imagePicker.launch("image/*") }, enabled = canAttach) {
+                            Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Attach images")
                         }
-                    )
-                },
-                minLines = 2,
-                maxLines = 4,
-                enabled = true,
-                trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    },
+                    trailingIcon = {
                         DictationButton(
                             state = uiState.dictation,
                             onStart = {
@@ -628,105 +767,14 @@ fun ChatScreen(
                             },
                             onFinish = viewModel::finishDictation
                         )
-                        IconButton(
-                            onClick = { imagePicker.launch("image/*") },
-                            enabled = canAttach
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Image,
-                                contentDescription = "Attach images"
-                            )
-                        }
                     }
-                }
-            )
-
-            if (uiState.dictation != Dictation.IDLE) {
-                DictationRow(
-                    state = uiState.dictation,
-                    seconds = uiState.dictationSeconds,
-                    onFinish = viewModel::finishDictation,
-                    onCancel = viewModel::cancelDictation
                 )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Secondary actions scroll sideways when they do not fit; Send stays
-                // pinned outside the scroller. With large system fonts this row used to
-                // overflow and push Send off the edge of the screen entirely.
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onNavigateToHistory) {
-                        Text("History")
-                    }
-                    TextButton(
-                        onClick = {
-                            val text = formatConversationForShare(
-                                uiState.messages.map { it.role to shareableMessageText(it) }
-                            )
-                            startPlainTextShare(context, text, "Share conversation")
-                        },
-                        enabled = uiState.messages.isNotEmpty()
-                    ) {
-                        Text("Share")
-                    }
-
-                    // Prompt actions
-                    val copyText = uiState.prompt.ifEmpty { uiState.lastSentPrompt }
-                    TextButton(
-                        onClick = {
-                            clipboard.setText(AnnotatedString(copyText))
-                            Toast.makeText(context, "Prompt copied", Toast.LENGTH_SHORT).show()
-                        },
-                        enabled = copyText.isNotEmpty()
-                    ) {
-                        Text("Copy")
-                    }
-                    if (uiState.isSending) {
-                        // Resend is meaningless mid-reply, and without a way to stop,
-                        // a slow request locked the composer until the call timed out.
-                        TextButton(onClick = viewModel::cancelSend) {
-                            Text("Stop")
-                        }
-                    } else {
-                        TextButton(
-                            onClick = {
-                                val last = uiState.lastSentPrompt
-                                if (last.isNotBlank()) {
-                                    viewModel.updatePrompt(last)
-                                    sendWithOptionalLocationPermission()
-                                }
-                            },
-                            enabled = uiState.lastSentPrompt.isNotBlank()
-                        ) {
-                            Text("Resend")
-                        }
-                    }
-                    TextButton(
-                        onClick = viewModel::clearPrompt,
-                        enabled = uiState.prompt.isNotEmpty() || uiState.hasAttachedImages
-                    ) {
-                        Text("Clear")
-                    }
-                }
-                Button(
-                    onClick = { sendWithOptionalLocationPermission() },
-                    modifier = Modifier.padding(start = 8.dp),
-                    enabled = uiState.canSend
-                ) {
-                    Text(
-                        text = if (uiState.isSending) "Queue" else "Send",
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
+                SendButton(
+                    isSending = uiState.isSending,
+                    canSend = uiState.canSend,
+                    onSend = { sendWithOptionalLocationPermission() },
+                    onStop = viewModel::cancelSend
+                )
             }
         }
     }
@@ -937,6 +985,7 @@ private fun TypingIndicator() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageItem(
     message: ChatUiMessage,
@@ -949,108 +998,182 @@ private fun MessageItem(
     onShare: ((ChatUiMessage) -> Unit)? = null
 ) {
     val clipboard = LocalClipboardManager.current
-    val isAssistant = message.role == "assistant"
+    val context = LocalContext.current
+    if (message.role != "assistant") {
+        // Your messages: a bubble on the right, so the conversation reads at a glance.
+        // Hold one to copy it.
+        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+            if (message.hasImage) {
+                SentImagesRow(uris = message.imageUris, onOpen = onOpenImage)
+            }
+            if (!message.isImageOnly || message.imageUris.isEmpty()) {
+                // Compose Text layouts the full string on the main thread. Cap display so a
+                // huge paste cannot ANR the same way debug-log bodies used to.
+                val display = if (message.content.length > 20_000) {
+                    message.content.take(20_000) + "\u2026"
+                } else {
+                    message.content
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .wrapContentWidth(Alignment.End)
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                clipboard.setText(AnnotatedString(message.content))
+                                Toast.makeText(context, "Prompt copied", Toast.LENGTH_SHORT).show()
+                            },
+                            onLongClickLabel = "Copy prompt"
+                        )
+                ) {
+                    Text(
+                        text = display,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = fontSize.sp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // Grok's answers: full width, with what they came from above and what you can do
+    // with them below, as icons of one size rather than a share icon beside a word.
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (isAssistant) "Grok" else "You",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (isAssistant) {
-                    val modelLabel = message.model
-                        ?.replaceFirstChar { it.uppercaseChar() }
-                        ?.replace("-", " ")
-                        ?: "Grok"
+            Text(
+                text = message.model
+                    ?.replaceFirstChar { it.uppercaseChar() }
+                    ?.replace("-", " ")
+                    ?: "Grok",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (message.usedWebSearch) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
                     Text(
-                        text = modelLabel,
+                        text = "Web search",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
-                    if (message.usedWebSearch) {
-                        Surface(
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = MaterialTheme.colorScheme.secondaryContainer
-                        ) {
-                            Text(
-                                text = "Web search",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-            }
-            if (isAssistant) {
-                val context = LocalContext.current
-                IconButton(
-                    onClick = { onShare?.invoke(message) },
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = "Share",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.outline)
-                }
-                TextButton(
-                    onClick = {
-                        // Strip any HTML tags so the clipboard receives clean plain text
-                        val plain = htmlToPlainText(message.content)
-                        clipboard.setText(AnnotatedString(plain))
-                        Toast.makeText(context, "Response copied", Toast.LENGTH_SHORT).show()
-                    }
-                ) {
-                    Text("Copy")
                 }
             }
         }
-        if (message.hasImage && !isAssistant) {
-            SentImagesRow(
-                uris = message.imageUris,
-                onOpen = onOpenImage
+        val htmlContent = if (responseFormat == "markdown") {
+            markdownToHtml(message.content)
+        } else {
+            message.content
+        }
+        HtmlContent(
+            html = htmlContent,
+            fontSize = fontSize,
+            cachedHeightPx = cachedWebViewHeightPx,
+            onHeightMeasured = onWebViewHeight
+        )
+        SourcesList(urls = message.citations)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = {
+                    // Strip any HTML tags so the clipboard receives clean plain text
+                    clipboard.setText(AnnotatedString(htmlToPlainText(message.content)))
+                    Toast.makeText(context, "Response copied", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.ContentCopy,
+                    contentDescription = "Copy response",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = { onShare?.invoke(message) }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Default.Share,
+                    contentDescription = "Share response",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (showCost && message.costInfo != null) {
+                Text(
+                    text = message.costInfo.formatted(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+/** Sends, or while a reply is arriving, queues what was typed or stops the reply. */
+@Composable
+private fun SendButton(isSending: Boolean, canSend: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
+    val stop = isSending && !canSend
+    FilledIconButton(
+        onClick = if (stop) onStop else onSend,
+        enabled = stop || canSend,
+        modifier = Modifier.size(56.dp),
+        colors = if (stop) {
+            IconButtonDefaults.filledIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer
             )
+        } else {
+            IconButtonDefaults.filledIconButtonColors()
         }
-        if (isAssistant) {
-            val htmlContent = if (responseFormat == "markdown") {
-                markdownToHtml(message.content)
+    ) {
+        when {
+            stop -> Icon(Icons.Default.Stop, contentDescription = "Stop the reply")
+            isSending -> Icon(Icons.AutoMirrored.Filled.ScheduleSend, contentDescription = "Queue this prompt")
+            else -> Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+        }
+    }
+}
+
+/** What went wrong, with Retry where retrying makes sense, and a way to put it away. */
+@Composable
+private fun ErrorCard(message: String, canRetry: Boolean, onRetry: () -> Unit, onDismiss: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(start = 14.dp, top = 10.dp, end = 4.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(top = 2.dp),
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(18.dp))
+                }
+            }
+            if (canRetry) {
+                TextButton(onClick = onRetry) {
+                    Icon(Icons.Outlined.Replay, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Retry")
+                }
             } else {
-                message.content
+                Spacer(Modifier.height(6.dp))
             }
-            HtmlContent(
-                html = htmlContent,
-                fontSize = fontSize,
-                cachedHeightPx = cachedWebViewHeightPx,
-                onHeightMeasured = onWebViewHeight
-            )
-            SourcesList(urls = message.citations)
-        } else if (!message.isImageOnly || message.imageUris.isEmpty()) {
-            // Compose Text layouts the full string on the main thread. Cap display so a
-            // huge paste cannot ANR the same way debug-log bodies used to.
-            val display = if (message.content.length > 20_000) {
-                message.content.take(20_000) + "…"
-            } else {
-                message.content
-            }
-            Text(
-                text = display,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = fontSize.sp)
-            )
-        }
-        if (showCost && isAssistant && message.costInfo != null) {
-            Text(
-                text = message.costInfo.formatted(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(top = 4.dp)
-            )
         }
     }
 }
@@ -1161,7 +1284,7 @@ private fun ImageViewerOverlay(uri: Uri, onDismiss: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SourcesList(urls: List<String>) {
     if (urls.isEmpty()) return
@@ -1172,48 +1295,67 @@ private fun SourcesList(urls: List<String>) {
     val uniqueUrls = urls.filter { it.isNotBlank() }.distinct()
     if (uniqueUrls.isEmpty()) return
 
+    // Chips with the site's name, numbered as the answer cites them ([1], [2] ...). A
+    // list of full addresses took more room than many answers, and twelve was not rare.
     Column(modifier = Modifier.padding(top = 8.dp)) {
-        Text(
-            text = "Sources",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = "Tap to open · hold to copy",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.padding(bottom = 2.dp)
-        )
-        uniqueUrls.forEachIndexed { index, url ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "${index + 1}. $url",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
+                text = "Sources",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "  \u00B7  hold to copy",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            uniqueUrls.forEachIndexed { index, url ->
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.combinedClickable(
                         onClick = {
                             try {
                                 uriHandler.openUri(url)
                             } catch (_: Exception) {
-                                Toast.makeText(
-                                    context,
-                                    "No app can open this link",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                Toast.makeText(context, "No app can open this link", Toast.LENGTH_SHORT).show()
                             }
                         },
+                        onClickLabel = "Open $url",
                         onLongClick = {
                             clipboard.setText(AnnotatedString(url))
                             Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
-                        }
+                        },
+                        onLongClickLabel = "Copy link"
                     )
-                    .padding(vertical = 4.dp)
-            )
+                ) {
+                    Text(
+                        text = "${index + 1} \u00B7 ${siteName(url)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
     }
 }
+
+/** "en.wikipedia.org" for a link to a Wikipedia page: enough to know where it goes. */
+internal fun siteName(url: String): String =
+    runCatching { java.net.URI(url.trim()).host }.getOrNull()
+        ?.removePrefix("www.")
+        ?.takeIf { it.isNotBlank() }
+        ?: url.removePrefix("https://").removePrefix("http://").substringBefore('/').ifBlank { url }
 
 private fun shareableMessageText(message: ChatUiMessage): String {
     val body = htmlToPlainText(message.content)
@@ -1240,7 +1382,8 @@ private fun HtmlContent(
     cachedHeightPx: Int = 0,
     onHeightMeasured: (Int) -> Unit = {}
 ) {
-    val bgColor = MaterialTheme.colorScheme.surface
+    // Transparent: the answer sits on the page, not on a lighter block of its own.
+    val bgColor = Color.Transparent
     val textColor = MaterialTheme.colorScheme.onSurface
     val linkColor = MaterialTheme.colorScheme.primary
     val density = LocalDensity.current
@@ -1256,7 +1399,7 @@ private fun HtmlContent(
                     font-size: ${fontSize}px;
                     line-height: 1.5;
                     color: ${colorToHex(textColor)};
-                    background-color: ${colorToHex(bgColor)};
+                    background-color: transparent;
                     word-wrap: break-word;
                     overflow-wrap: break-word;
                     max-width: 100%;

@@ -842,6 +842,31 @@ class ChatViewModel @Inject constructor(
      * Clear the conversation. Also stops anything in flight: leaving [isSending] set
      * here left an empty screen with a dead Send button and no way back.
      */
+    /** The conversation as it was before the last New chat, for Undo. */
+    private var beforeNewChat: List<ChatUiMessage>? = null
+
+    /**
+     * Start a new chat, keeping the old one for a moment so it can be put back. New chat
+     * is now an icon in the top bar, which is easier to hit by accident than the word.
+     */
+    fun startNewChat() {
+        beforeNewChat = _uiState.value.messages.takeIf { it.isNotEmpty() }
+        clearMessages()
+    }
+
+    /** Put back the conversation the last New chat cleared, if nothing has been sent since. */
+    fun undoNewChat() {
+        val previous = beforeNewChat ?: return
+        beforeNewChat = null
+        if (_uiState.value.messages.isNotEmpty() || _uiState.value.isSending) return
+        _uiState.value = _uiState.value.copy(messages = previous)
+        rememberConversation()
+    }
+
+    fun dismissError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
     fun clearMessages() {
         val job = sendJob
         sendJob = null
