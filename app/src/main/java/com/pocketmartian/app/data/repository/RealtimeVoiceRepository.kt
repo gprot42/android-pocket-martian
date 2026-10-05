@@ -528,7 +528,7 @@ class RealtimeVoiceRepository @Inject constructor(
         val mp3Bytes = fetchTtsMp3(transcript, storedVoice) ?: return@withContext null
 
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", JavaLocale.US).format(Date())
-        val fileName = "ggrok_$stamp.mp3"
+        val fileName = "pocket-martian_$stamp.mp3"
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -567,7 +567,7 @@ class RealtimeVoiceRepository @Inject constructor(
         val mp3Bytes = fetchTtsMp3(transcript, storedVoice) ?: return@withContext null
 
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", JavaLocale.US).format(Date())
-        val fileName = "ggrok_$stamp.mp3"
+        val fileName = "pocket-martian_$stamp.mp3"
         try {
             val cacheDir = java.io.File(context.cacheDir, "voice_audio").also { it.mkdirs() }
             val file = java.io.File(cacheDir, fileName)

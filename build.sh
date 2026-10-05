@@ -2,7 +2,7 @@
 # Build the Pocket Martian APK and copy it to the project root.
 #
 # Usage:
-#   ./build.sh              # release APK → ./pocket-martian-<version>-universal.apk
+#   ./build.sh              # release APK → private-not-in-git/builds/pocket-martian-<version>-universal-release.apk
 #   ./build.sh --debug      # debug APK (no ABI splits path if missing → assembleDebug)
 #   ./build.sh --emulate    # debug build, install & launch on emulator
 set -euo pipefail
@@ -80,7 +80,9 @@ fi
 BASENAME="$(basename "$SRC")"
 # root name: pocket-martian-0.0.1-universal-release.apk (or whatever the built file is)
 OUT_NAME="pocket-martian-${VERSION}-${BASENAME#app-github-}"
-DEST="$ROOT/$OUT_NAME"
+# Builds are kept with everything else that stays out of git.
+mkdir -p "$ROOT/private-not-in-git/builds"
+DEST="$ROOT/private-not-in-git/builds/$OUT_NAME"
 
 cp -f "$SRC" "$DEST"
 echo "==> Copied:"

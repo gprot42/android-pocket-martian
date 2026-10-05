@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Martian privacy policy</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1d1d1f; --muted: #5f6368; --rule: #e3e3e3; --link: #0b57d0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121212; --fg: #e8e8e8; --muted: #a0a0a0; --rule: #333333; --link: #8ab4f8; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.8rem; margin-bottom: 0.2rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-top: 1px solid var(--rule); padding-top: 1.2rem; }
+  .updated { color: var(--muted); margin-top: 0; }
+  a { color: var(--link); }
+  li { margin-bottom: 0.4rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>Pocket Martian privacy policy</h1>
+<p class="updated">Last updated 5 October 2026</p>
+
+<p>Pocket Martian is an Android app for chatting with xAI's Grok models using your own xAI
+API key. It is an independent app, not made by or affiliated with xAI. This page explains
+what the app does with your information.</p>
+
+<h2>The short version</h2>
+<ul>
+  <li>The developer of Pocket Martian receives none of your data. The app has no accounts,
+    analytics, advertising or crash reporting.</li>
+  <li>What you ask goes to xAI, the company behind Grok, because answering it is the point
+    of the app. You pay for that with your own API key, under
+    <a href="https://x.ai/legal/privacy-policy">xAI's privacy policy</a>.</li>
+  <li>Everything else stays on your phone.</li>
+</ul>
+
+<h2>What goes to xAI</h2>
+<p>When you use these features, the app sends the following to xAI's API
+(<code>api.x.ai</code>) over an encrypted connection:</p>
+<ul>
+  <li><strong>Your prompts and the conversation so far</strong>, so Grok can answer in context.</li>
+  <li><strong>Photos and scanned pages</strong> you attach. Scans are processed on your phone;
+    only if the phone can't find the page's edges is the photo sent to Grok to find them.</li>
+  <li><strong>Your voice</strong>, when you dictate a prompt or use the voice translator, to be
+    turned into text or translated speech.</li>
+  <li><strong>Your approximate location and nearby place name</strong>, only when location is
+    switched on in the app's settings and you have given Android permission, so Grok can answer
+    questions like "what's the weather here". You can turn this off at any time.</li>
+</ul>
+<p>The app asks xAI not to store its responses (<code>store=false</code>). xAI's own handling
+of what it receives is set out in its privacy policy and terms.</p>
+<p>If you use the optional <strong>credits and usage</strong> screen, a management key you
+provide is sent to xAI's management API (<code>management-api.x.ai</code>). If you use the
+experimental <strong>SuperGrok sign-in</strong>, you sign in on xAI's own pages
+(<code>auth.x.ai</code>).</p>
+
+<h2>Other services the app talks to</h2>
+<ul>
+  <li><strong>Realtime Trains</strong> (<code>data.rtt.io</code>): only if you add your own
+    Realtime Trains token. The station and train being asked about are sent with your token to
+    fetch live UK train times.</li>
+  <li><strong>Your phone's geocoding service</strong>: with location on, Android's built-in
+    geocoder turns coordinates into a place name. Which company provides it depends on your
+    phone; on many phones it is Google.</li>
+  <li><strong>Public DNS resolvers</strong> (Google, <code>dns.google</code>, and Cloudflare,
+    <code>cloudflare-dns.com</code>): only if your network can't look up <code>api.x.ai</code>,
+    the app asks them for that address instead. Only the name <code>api.x.ai</code> is sent.</li>
+  <li><strong>GitHub</strong> (<code>api.github.com</code>): the version installed from GitHub,
+    not the one from Google Play, checks once a day for a newer release. GitHub sees the app's
+    version number and your IP address, as with any web request.</li>
+  <li><strong>Links you open</strong>, such as sources under an answer, open in your browser
+    and are covered by those websites' own policies.</li>
+</ul>
+
+<h2>What stays on your phone</h2>
+<p>Your xAI API key, any Realtime Trains token or management key, your settings, saved
+conversations, the response history and the app's diagnostic logs are kept in the app's
+private storage, which other apps can't read. They are left out of Android's cloud backups.
+<strong>Clear</strong> in the app deletes the saved conversation, and uninstalling the app
+deletes everything it stored.</p>
+
+<h2>Permissions</h2>
+<ul>
+  <li><strong>Microphone</strong>: for dictation and the voice translator, only while you are
+    using them.</li>
+  <li><strong>Location</strong>: optional, as described above, and only while the app is open.</li>
+  <li><strong>Internet</strong>: to reach the services above.</li>
+</ul>
+<p>Photos reach the app only when you pick or share them, or take one with your camera app;
+it has no permission to read your photo library or use the camera itself.</p>
+
+<h2>Children</h2>
+<p>Pocket Martian is meant for adults and is not directed at children.</p>
+
+<h2>Changes</h2>
+<p>If the app's handling of data changes, this page will be updated and the date at the top
+changed. The page's history is public in the app's
+<a href="https://github.com/gprot42/android-pocket-martian/commits/main/docs/privacy.html">GitHub repository</a>.</p>
+
+<h2>Contact</h2>
+<p>Questions about privacy: <!--contact--><!--/contact-->open an issue at
+<a href="https://github.com/gprot42/android-pocket-martian/issues">github.com/gprot42/android-pocket-martian/issues</a>.</p>
+</main>
+</body>
+</html>

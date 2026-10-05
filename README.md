@@ -2,7 +2,7 @@
 
 A lightweight native Android app for chatting with xAI's Grok models.
 
-*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. This app was called Tiny Ggrok until 0.0.41; it is now **Pocket Martian**, a name that nods to that origin without borrowing xAI's mark. The repository moved with it, from `android-tiny-ggrok` to `android-pocket-martian`; GitHub redirects the old address, so older versions still find their updates. The package name changed too, from `com.tinyggrok.app` to `com.pocketmartian.app`, so Android treats Pocket Martian as a new app: it installs alongside Tiny Ggrok rather than over it. Enter your xAI key (and Realtime Trains token, if you use one) again in Pocket Martian, then uninstall Tiny Ggrok. Saved chats do not carry over.
+*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. **Pocket Martian** nods to that origin without borrowing xAI's mark.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Pocket Martian chat" width="280">
@@ -16,7 +16,7 @@ A lightweight native Android app for chatting with xAI's Grok models.
 - Chat models: **Grok 4.7** (default), **4.6** or **4.5**, selectable in Settings; 4.6 is used automatically if your choice is unavailable. Grok 4.7 Fast is deliberately absent: it is the same model on faster hardware at twice the rates, and xAI serves it only through Cursor and Grok Build, not on the public API
 - Uses xAI Agent Tools / Responses API (`https://api.x.ai/v1/responses`)
 - **Live web search**: when Grok is unsure or a question depends on recent/factual information, it automatically uses the `web_search` tool instead of guessing. Source links are appended to answers (tap to open, long-press to copy)
-- **A tidier chat screen**: the top bar is the title and four icons of one size (New chat, Scan, Settings, ⋮), with Voice translator, History, Share conversation, Resend and Logs in the ⋮ menu, instead of a mix of words and an icon that cut the title to "Tiny Ggr…" at large text sizes. The composer is one rounded **Ask Grok…** field with attach and the microphone inside, and a round button beside it that sends, queues (while a reply is arriving) or stops. It replaces five text buttons under the field that clipped and sat greyed out most of the time. Your messages are bubbles on the right (hold one to copy it); each answer has copy and share icons beneath it and sits on the page, not on a grey block; sources are compact chips with the site's name. Errors are a card with **Retry** where retrying makes sense. **New chat** offers **Undo**. On the light theme the status bar's clock and icons are now dark, not white on white
+- **A tidier chat screen**: the top bar is the title and four icons of one size (New chat, Scan, Settings, ⋮), with Voice translator, History, Share conversation, Resend and Logs in the ⋮ menu, instead of a mix of words and an icon that cut the title short at large text sizes. The composer is one rounded **Ask Grok…** field with attach and the microphone inside, and a round button beside it that sends, queues (while a reply is arriving) or stops. It replaces five text buttons under the field that clipped and sat greyed out most of the time. Your messages are bubbles on the right (hold one to copy it); each answer has copy and share icons beneath it and sits on the page, not on a grey block; sources are compact chips with the site's name. Errors are a card with **Retry** where retrying makes sense. **New chat** offers **Undo**. On the light theme the status bar's clock and icons are now dark, not white on white
 - **Live UK train times** with your own [Realtime Trains](https://www.realtimetrains.co.uk) token: Grok reads live departures, delays, cancellations, platforms and arrival times from Network Rail's running data instead of searching the web for them (see [UK train times (Realtime Trains)](#uk-train-times-realtime-trains))
 - **UK transit lookups**: prefers official National Rail / TOC sites for live times and disruptions (see [UK transit web sources](#uk-transit-web-sources)); open web for everything else
 - **GPS location** (on by default; optional — turn off in Settings): so you can ask things like *“find me transport from my current location to X”* without naming a station. Approximate coordinates/place are attached to the prompt when permission is granted; the model uses them with web search (National Rail, Thameslink, TfL, etc.) to plan from nearest stations/stops. Not required for general chat
@@ -294,6 +294,6 @@ Follows the plan in PLAN.md: Hilt DI, Retrofit for API, DataStore for settings, 
 MIT - For personal/educational use.
 
 ## Notes
-- Package renamed from com.aicoder to com.tinygrok.client, then com.tinyggrok.app, and since 0.0.41 com.pocketmartian.app
+- Package: com.pocketmartian.app
 - API key never logged or exposed
 - Tokyo Night theme uses authentic colors from the popular VSCode theme

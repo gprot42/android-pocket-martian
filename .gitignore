@@ -111,3 +111,4 @@ Thumbs.db
 # Play: app bundles and the publishing key, which live outside the repo
 *.aab
 play-service-account*.json
+

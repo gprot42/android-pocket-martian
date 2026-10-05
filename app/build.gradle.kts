@@ -1,6 +1,7 @@
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Properties
 import java.util.TimeZone
 
 plugins {
@@ -33,11 +34,15 @@ android {
         }
     }
 
-    // The release key, from ~/.gradle/gradle.properties (or POCKET_MARTIAN_* environment
-    // variables), never from this repository.
+    // The release key, from private-not-in-git/secrets/release-key.properties (a folder git
+    // ignores), ~/.gradle/gradle.properties or POCKET_MARTIAN_* environment variables;
+    // never from the repository itself.
+    val keyFile = rootProject.file("private-not-in-git/secrets/release-key.properties")
+    val keyProps = Properties().apply { if (keyFile.exists()) keyFile.inputStream().use { load(it) } }
     val releaseKey = listOf("STORE_FILE", "STORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
         .associateWith { name ->
-            (findProperty("pocketMartian.${name.lowercase()}") as String?)
+            keyProps.getProperty(name.lowercase())
+                ?: (findProperty("pocketMartian.${name.lowercase()}") as String?)
                 ?: System.getenv("POCKET_MARTIAN_$name")
         }
     val hasReleaseKey = releaseKey.values.all { !it.isNullOrBlank() }
