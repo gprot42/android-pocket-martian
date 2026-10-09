@@ -169,4 +169,54 @@ class ResponsesSseParserTest {
         assertEquals(4, parsed.completed?.usage?.inputDetails?.cachedTokens)
         assertEquals(40, parsed.completed?.usage?.outputDetails?.reasoningTokens)
     }
+
+    // --- pictures from the image_generation tool ------------------------------------------
+
+    private val tinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+    @Test
+    fun aPictureIsTakenFromItsFinishedItemOnce() {
+        val sse = """
+            data: {"type":"response.output_item.added","item":{"type":"image_generation_call","id":"ig_1","status":"in_progress"}}
+
+            data: {"type":"response.image_generation_call.generating","item_id":"ig_1"}
+
+            data: {"type":"response.output_item.done","item":{"type":"image_generation_call","id":"ig_1","status":"completed","prompt":"A red sports car at dusk","result":"$tinyPng"}}
+
+            data: {"type":"response.output_text.delta","delta":"Here it is."}
+
+            data: {"type":"response.completed","response":{"output":[{"type":"image_generation_call","id":"ig_1","status":"completed","prompt":"A red sports car at dusk","result":"$tinyPng"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Here it is."}]}]}}
+
+        """.trimIndent()
+        var started = 0
+        val parsed = ResponsesSseParser(listener = object : ResponsesStreamListener {
+            override fun onImageStarted() { started++ }
+        }).parse(StringReader(sse))
+        assertEquals(1, parsed.images.size)
+        assertEquals("ig_1", parsed.images[0].id)
+        assertEquals("A red sports car at dusk", parsed.images[0].prompt)
+        assertEquals(tinyPng, parsed.images[0].base64)
+        assertTrue("told the screen a picture is on its way", started > 0)
+        assertTrue("a picture's base64 is not a source", parsed.citations.isEmpty())
+        assertFalse(parsed.usedWebSearch)
+    }
+
+    @Test
+    fun aPictureOnlyInTheCompletedResponseIsStillFound() {
+        val sse = """
+            data: {"type":"response.completed","response":{"output":[{"type":"image_generation_call","id":"ie_7","status":"completed","result":"$tinyPng"}]}}
+
+        """.trimIndent()
+        val parsed = parser.parse(StringReader(sse))
+        assertEquals(listOf("ie_7"), parsed.images.map { it.id })
+    }
+
+    @Test
+    fun aPictureWithNoResultIsSkipped() {
+        val sse = """
+            data: {"type":"response.output_item.done","item":{"type":"image_generation_call","id":"ig_2","status":"failed"}}
+
+        """.trimIndent()
+        assertTrue(parser.parse(StringReader(sse)).images.isEmpty())
+    }
 }

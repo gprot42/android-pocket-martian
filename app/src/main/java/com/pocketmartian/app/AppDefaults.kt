@@ -48,5 +48,11 @@ object AppDefaults {
     const val MAX_TURNS_DEFAULT = 6
     const val MAX_TURNS_TRANSIT = 12
 
+    /**
+     * What one picture from Grok Imagine (grok-imagine-image-2.0) costs, in US dollars,
+     * on top of the chat tokens. From xAI's price list, October 2026.
+     */
+    const val IMAGE_COST_USD = 0.04
+
     const val FRAMEWORK = "Jetpack Compose + Material3, Hilt, Retrofit/OkHttp, DataStore"
 }

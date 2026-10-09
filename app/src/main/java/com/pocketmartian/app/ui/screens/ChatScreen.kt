@@ -97,6 +97,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -160,6 +161,14 @@ import com.pocketmartian.app.ui.viewmodel.MAX_ATTACHED_IMAGES
 import com.pocketmartian.app.ui.viewmodel.QueuedPrompt
 import kotlin.math.ceil
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.pocketmartian.app.data.repository.GeneratedImages
+import com.pocketmartian.app.data.share.saveImageToGallery
+import com.pocketmartian.app.data.share.startImageFileShare
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.FilledTonalButton
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import org.commonmark.ext.gfm.tables.TablesExtension
@@ -1070,17 +1079,23 @@ private fun MessageItem(
                 }
             }
         }
-        val htmlContent = if (responseFormat == "markdown") {
-            markdownToHtml(message.content)
-        } else {
-            message.content
+        if (message.hasImage) {
+            MadeImages(uris = message.imageUris, onOpen = onOpenImage)
         }
-        HtmlContent(
-            html = htmlContent,
-            fontSize = fontSize,
-            cachedHeightPx = cachedWebViewHeightPx,
-            onHeightMeasured = onWebViewHeight
-        )
+        // A picture can be the whole answer, with no words to lay out.
+        if (message.content.isNotBlank()) {
+            val htmlContent = if (responseFormat == "markdown") {
+                markdownToHtml(message.content)
+            } else {
+                message.content
+            }
+            HtmlContent(
+                html = htmlContent,
+                fontSize = fontSize,
+                cachedHeightPx = cachedWebViewHeightPx,
+                onHeightMeasured = onWebViewHeight
+            )
+        }
         SourcesList(urls = message.citations)
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
@@ -1105,6 +1120,20 @@ private fun MessageItem(
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (message.hasImage) {
+                val scope = rememberCoroutineScope()
+                IconButton(
+                    onClick = { scope.launch { saveMadeImages(context, message.imageUris) } },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Download,
+                        contentDescription = if (message.imageCount == 1) "Save picture to gallery" else "Save pictures to gallery",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             if (showCost && message.costInfo != null) {
                 Text(
@@ -1217,6 +1246,52 @@ private fun SentImagesRow(
     }
 }
 
+/**
+ * Pictures Grok made: as wide as the answer and as tall as they need, up to most of a
+ * screen, so they are seen rather than hinted at by a thumbnail. Tap one to zoom.
+ */
+@Composable
+private fun MadeImages(uris: List<Uri>, onOpen: (Uri) -> Unit) {
+    val fallback = rememberVectorPainter(Icons.Outlined.Image)
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
+    ) {
+        uris.forEachIndexed { index, uri ->
+            AsyncImage(
+                model = uri,
+                contentDescription = if (uris.size == 1) {
+                    "Picture Grok made, tap to view"
+                } else {
+                    "Picture ${index + 1} of ${uris.size} Grok made, tap to view"
+                },
+                contentScale = ContentScale.Fit,
+                error = fallback,
+                fallback = fallback,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onOpen(uri) }
+            )
+        }
+    }
+}
+
+/** Copy pictures Grok made into the gallery, and say how it went. */
+private suspend fun saveMadeImages(context: android.content.Context, uris: List<Uri>) {
+    val message = withContext(Dispatchers.IO) {
+        try {
+            var place = ""
+            uris.mapNotNull { it.path }.forEach { place = saveImageToGallery(context, java.io.File(it)) }
+            if (uris.size == 1) "Saved to your gallery, in $place." else "Saved ${uris.size} pictures to your gallery, in $place."
+        } catch (e: Throwable) {
+            "Couldn't save to the gallery: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+}
+
 /** Full-screen image viewer: pinch to zoom, drag to pan, tap to close. */
 @Composable
 private fun ImageViewerOverlay(uri: Uri, onDismiss: () -> Unit) {
@@ -1273,6 +1348,8 @@ private fun ImageViewerOverlay(uri: Uri, onDismiss: () -> Unit) {
             onClick = onDismiss,
             modifier = Modifier
                 .align(Alignment.TopEnd)
+                // Clear of the status bar, where it used to sit over the clock and battery.
+                .statusBarsPadding()
                 .padding(8.dp)
         ) {
             Icon(
@@ -1280,6 +1357,38 @@ private fun ImageViewerOverlay(uri: Uri, onDismiss: () -> Unit) {
                 contentDescription = "Close image",
                 tint = Color.White
             )
+        }
+        // A picture Grok made exists only in the app until it is saved or sent.
+        val context = LocalContext.current
+        val made = remember(uri) {
+            uri.path?.takeIf { uri.scheme == "file" && GeneratedImages.isGenerated(context, it) }?.let { java.io.File(it) }
+        }
+        if (made != null) {
+            val scope = rememberCoroutineScope()
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp)
+            ) {
+                FilledTonalButton(onClick = { scope.launch { saveMadeImages(context, listOf(uri)) } }) {
+                    Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save")
+                }
+                FilledTonalButton(onClick = {
+                    try {
+                        startImageFileShare(context, made, "Share picture")
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "No app available to share to.", Toast.LENGTH_LONG).show()
+                    }
+                }) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Share")
+                }
+            }
         }
     }
 }

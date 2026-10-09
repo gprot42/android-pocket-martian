@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -521,6 +522,14 @@ internal fun ColumnScope.ChatSettings(
                 }
         }
         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+        SettingsToggleRow(
+            title = "Create images",
+            subtitle = "Grok draws pictures and edits your photos when you ask, with Grok Imagine · " +
+                "\$${"%.2f".format(AppDefaults.IMAGE_COST_USD)} per image",
+            icon = Icons.Default.Brush,
+            checked = uiState.imagesEnabled,
+            onCheckedChange = viewModel::updateImagesEnabled
+        )
         SettingsToggleRow(
             title = "Show cost per query",
             subtitle = "Display token cost below each response",
@@ -1102,7 +1111,8 @@ private fun chatSummary(uiState: SettingsUiState): String {
         ?: uiState.chatModel
     val format = if (uiState.responseFormat == "markdown") "Markdown" else "HTML"
     val cost = if (uiState.showCost) " · cost on" else ""
-    return "Grok $model · $format$cost"
+    val images = if (uiState.imagesEnabled) "" else " · images off"
+    return "Grok $model · $format$images$cost"
 }
 
 private fun voiceSummary(uiState: SettingsUiState): String {

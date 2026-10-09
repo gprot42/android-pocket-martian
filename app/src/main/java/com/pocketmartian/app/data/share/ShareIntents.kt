@@ -52,7 +52,11 @@ fun startPlainTextShare(context: Context, text: String, chooserTitle: String) {
 fun startImageFileShare(context: Context, file: File, chooserTitle: String) {
     val uri = FileProvider.getUriForFile(context, FILE_PROVIDER_AUTHORITY, file)
     val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/jpeg"
+        type = when (file.extension.lowercase()) {
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "image/jpeg"
+        }
         putExtra(Intent.EXTRA_STREAM, uri)
         // Email apps use this as the subject line; messengers such as Signal and
         // Telegram ignore it. No EXTRA_TEXT: messengers would post it as a caption.

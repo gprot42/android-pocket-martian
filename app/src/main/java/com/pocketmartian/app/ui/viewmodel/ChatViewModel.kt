@@ -15,6 +15,7 @@ import com.pocketmartian.app.data.model.TextContent
 import com.pocketmartian.app.data.repository.ChatProgress
 import com.pocketmartian.app.data.repository.ChatRepository
 import com.pocketmartian.app.data.repository.DebugLogRepository
+import com.pocketmartian.app.data.repository.GeneratedImages
 import com.pocketmartian.app.data.repository.ResolvedAuth
 import com.pocketmartian.app.data.local.ChatTranscriptStore
 import com.pocketmartian.app.data.local.StoredMessage
@@ -53,6 +54,9 @@ internal const val SEARCH_STATUS = "Searching the web\u2026"
 
 /** Max images the user can attach to a single prompt (API / payload safety). */
 const val MAX_ATTACHED_IMAGES = 10
+
+/** Pictures from the last answer sent again with a follow-up, so they can be edited. */
+internal const val MAX_RESENT_IMAGES = 2
 
 /** Newest assistant turns kept as context (each with its paired user prompt). */
 internal const val MAX_HISTORY_ASSISTANT_TURNS = 10
@@ -282,6 +286,17 @@ class ChatViewModel @Inject constructor(
     private fun restoreConversation() {
         viewModelScope.launch {
             val saved = transcriptStore.load()
+            // Pictures Grok made for conversations that are gone are no use to anyone.
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    GeneratedImages.purgeUnreferenced(
+                        context,
+                        keep = saved.messages.flatMap { it.imageUris }
+                            .mapNotNull { runCatching { Uri.parse(it).path }.getOrNull() }
+                            .toSet()
+                    )
+                }
+            }
             if (saved.isEmpty) return@launch
             val state = _uiState.value
             // Anything the user has already done this run wins over what was on disk.
@@ -641,6 +656,7 @@ class ChatViewModel @Inject constructor(
 
             val debugMode = settingsRepository.debugMode.first()
             val chatModel = settingsRepository.chatModel.first()
+            val imagesEnabled = settingsRepository.imagesEnabled.first()
             val previousMessages = _uiState.value.messages
             val displayText = if (prompt.isNotEmpty()) {
                 prompt
@@ -671,9 +687,28 @@ class ChatViewModel @Inject constructor(
                 .map { msg ->
                     Message(
                         role = msg.role,
-                        text = if (msg.role == "assistant") htmlToHistoryText(msg.content) else msg.content
+                        text = if (msg.role == "assistant") {
+                            // The picture itself is not resent, but the model should know it made one.
+                            val made = if (msg.hasImage) "[You made ${msg.imageCount} picture(s) here.] " else ""
+                            made + htmlToHistoryText(msg.content)
+                        } else {
+                            msg.content
+                        }
                     )
                 }
+
+            // A follow-up to a picture ("now make it night") needs the picture: requests
+            // are not stored at xAI, so the last answer's pictures go along with this one.
+            val previousImages = if (imagesEnabled) {
+                previousMessages.lastOrNull()
+                    ?.takeIf { it.role == "assistant" }
+                    ?.imageUris
+                    ?.takeLast(MAX_RESENT_IMAGES)
+                    ?.mapNotNull { uri -> withContext(Dispatchers.IO) { runCatching { uriToBase64(uri) }.getOrNull() } }
+                    .orEmpty()
+            } else {
+                emptyList()
+            }
 
             val locationContext = locationDeferred.await()
 
@@ -690,6 +725,8 @@ class ChatViewModel @Inject constructor(
                 responseFormat = _uiState.value.responseFormat,
                 model = chatModel,
                 locationContext = locationContext,
+                imagesEnabled = imagesEnabled,
+                previousImagesBase64 = previousImages,
                 onProgress = { progress ->
                     when (progress) {
                         is ChatProgress.Searching -> {
@@ -729,7 +766,8 @@ class ChatViewModel @Inject constructor(
                     val costInfo = response.usage?.let { usage ->
                         val (inPerM, outPerM) = costRatesPerMillion(chatModel)
                         val cost = usage.prompt_tokens * (inPerM / 1_000_000.0) +
-                                usage.completion_tokens * (outPerM / 1_000_000.0)
+                                usage.completion_tokens * (outPerM / 1_000_000.0) +
+                                response.images.size * AppDefaults.IMAGE_COST_USD
                         CostInfo(
                             promptTokens = usage.prompt_tokens,
                             completionTokens = usage.completion_tokens,
@@ -748,7 +786,8 @@ class ChatViewModel @Inject constructor(
                             costInfo = costInfo,
                             model = response.model.ifBlank { null },
                             usedWebSearch = response.usedWebSearch,
-                            citations = response.citations
+                            citations = response.citations,
+                            imageUris = response.images.map { Uri.fromFile(it) }
                         ),
                         isSending = false,
                         streamingText = "",

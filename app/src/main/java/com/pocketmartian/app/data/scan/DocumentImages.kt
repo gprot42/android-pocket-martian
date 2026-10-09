@@ -12,6 +12,7 @@ import android.graphics.Rect
 import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
+import com.pocketmartian.app.data.share.saveImageToGallery
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -376,3 +377,6 @@ internal fun saveScanJpeg(context: Context, bitmap: Bitmap): File {
     file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
     return file
 }
+
+/** Copy a finished scan into the phone's gallery and return the folder it went to. */
+internal fun saveScanToGallery(context: Context, file: File): String = saveImageToGallery(context, file)

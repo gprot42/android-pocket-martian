@@ -34,6 +34,8 @@ import com.pocketmartian.app.data.scan.orderCorners
 import com.pocketmartian.app.data.scan.purgeOldScans
 import com.pocketmartian.app.data.scan.refineCorners
 import com.pocketmartian.app.data.scan.saveScanJpeg
+import com.pocketmartian.app.data.scan.saveScanToGallery
+import com.pocketmartian.app.data.share.GALLERY_PLACE
 import com.pocketmartian.app.data.scan.TEXT_LUMA_MAX_SIDE
 import com.pocketmartian.app.data.scan.squareUp
 import com.pocketmartian.app.data.scan.straightenByText
@@ -328,11 +330,11 @@ class ScanViewModel @Inject constructor(
     }
 
     /**
-     * Turn the photo a quarter turn clockwise, outline and all. A phone held flat over a
-     * page on a desk or floor cannot tell portrait from landscape, so the capture often
-     * arrives sideways; what is shown here is exactly what will be flattened.
+     * Turn the photo a quarter turn, clockwise or not, outline and all. A phone held flat
+     * over a page on a desk or floor cannot tell portrait from landscape, so the capture
+     * often arrives sideways; what is shown here is exactly what will be flattened.
      */
-    fun rotate() {
+    fun rotate(clockwise: Boolean = true) {
         val state = _uiState.value
         val photo = state.photo ?: return
         if (!state.canConfirm) return
@@ -341,14 +343,17 @@ class ScanViewModel @Inject constructor(
                 val turned = withContext(Dispatchers.Default) {
                     Bitmap.createBitmap(
                         photo, 0, 0, photo.width, photo.height,
-                        Matrix().apply { postRotate(90f) }, true
+                        Matrix().apply { postRotate(if (clockwise) 90f else -90f) }, true
                     )
                 }
-                // A point (x, y) lands at (1 - y, x) after a clockwise quarter turn.
-                val corners = orderCorners(state.corners.toList().map { NormPoint(1f - it.y, it.x) })
+                // A point (x, y) lands at (1 - y, x) after a clockwise quarter turn, and at
+                // (y, 1 - x) after an anticlockwise one.
+                val corners = orderCorners(state.corners.toList().map {
+                    if (clockwise) NormPoint(1f - it.y, it.x) else NormPoint(it.y, 1f - it.x)
+                })
                 viewsOf = null
                 flattened = null
-                userTurn = (userTurn + 90) % 360
+                userTurn = (userTurn + if (clockwise) 90 else 270) % 360
                 // The previous bitmap is left to the garbage collector: the screen may
                 // still be drawing it this frame, and recycling under it would crash.
                 val showing = _uiState.value.result != null
@@ -380,6 +385,28 @@ class ScanViewModel @Inject constructor(
      * aligned page can go to the prompt as well without scanning twice.
      */
     fun share(onReady: (File) -> Unit) = flattenThen(keepOpen = true, then = onReady)
+
+    /** The page last put in the gallery, so a second tap doesn't save a duplicate. */
+    private var savedToGallery: File? = null
+
+    /** Put the aligned page in the phone's gallery. The scanner stays open. */
+    fun saveToGallery() = flattenThen(keepOpen = true) { file ->
+        viewModelScope.launch {
+            if (savedToGallery == file) {
+                _uiState.value = _uiState.value.copy(note = "Already in your gallery, in $GALLERY_PLACE.")
+                return@launch
+            }
+            try {
+                val folder = withContext(Dispatchers.IO) { saveScanToGallery(context, file) }
+                savedToGallery = file
+                _uiState.value = _uiState.value.copy(note = "Saved to your gallery, in $folder.")
+            } catch (e: Throwable) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Couldn't save to the gallery: ${e.message ?: e.javaClass.simpleName}"
+                )
+            }
+        }
+    }
 
     /**
      * The straightened page for a given set of corners. Kept so that sharing and then

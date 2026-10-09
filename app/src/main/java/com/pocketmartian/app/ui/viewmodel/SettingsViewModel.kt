@@ -55,6 +55,7 @@ data class SettingsUiState(
     val teamId: String = "",
     val theme: AppTheme = AppTheme.DARK,
     val showCost: Boolean = false,
+    val imagesEnabled: Boolean = true,
     val debugMode: Boolean = false,
     val responseFormat: String = "html",
     val fontSize: Float = 14f,
@@ -135,6 +136,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.showCost.collect { show ->
                 _uiState.value = _uiState.value.copy(showCost = show)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.imagesEnabled.collect { on ->
+                _uiState.value = _uiState.value.copy(imagesEnabled = on)
             }
         }
         viewModelScope.launch {
@@ -500,6 +506,11 @@ class SettingsViewModel @Inject constructor(
     fun updateTheme(theme: AppTheme) {
         _uiState.value = _uiState.value.copy(theme = theme, savedMessage = null)
         viewModelScope.launch { settingsRepository.saveTheme(theme) }
+    }
+
+    fun updateImagesEnabled(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(imagesEnabled = enabled, savedMessage = null)
+        viewModelScope.launch { settingsRepository.saveImagesEnabled(enabled) }
     }
 
     fun updateShowCost(show: Boolean) {

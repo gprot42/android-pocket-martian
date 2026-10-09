@@ -7,6 +7,7 @@ import android.util.Log
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonElement
 import com.pocketmartian.app.AppDefaults
+import com.pocketmartian.app.data.api.GeneratedImageData
 import com.pocketmartian.app.data.api.ResponsesSseParser
 import com.pocketmartian.app.data.api.ResponsesStreamListener
 import com.pocketmartian.app.data.api.XaiApiService
@@ -89,7 +90,9 @@ data class ChatResult(
     val usage: Usage? = null,
     val model: String = "",
     val usedWebSearch: Boolean = false,
-    val citations: List<String> = emptyList()
+    val citations: List<String> = emptyList(),
+    /** Pictures Grok made for this answer, saved in the app's storage (see [GeneratedImages]). */
+    val images: List<java.io.File> = emptyList()
 )
 
 /** Result of a lightweight GET /v1/models auth probe. */
@@ -220,6 +223,14 @@ class ChatRepository @Inject constructor(
         model: String = AppDefaults.DEFAULT_MODEL,
         /** Optional approximate location snippet already formatted for instructions. */
         locationContext: String? = null,
+        /** Let Grok make and edit pictures with Grok Imagine when the prompt calls for it. */
+        imagesEnabled: Boolean = true,
+        /**
+         * Pictures Grok made in its previous answer, sent again so that a follow-up such
+         * as "now make it night" can edit them: requests are not stored at xAI, so the
+         * picture is otherwise gone from the conversation.
+         */
+        previousImagesBase64: List<String> = emptyList(),
         /** Called as the reply streams in, off the main thread. */
         onProgress: ((ChatProgress) -> Unit)? = null,
         /** Where the time goes on this prompt; see [SendTiming]. */
@@ -332,10 +343,12 @@ class ChatRepository @Inject constructor(
                     )
                 }
             }
-            val instructions = listOf(formatInstructions, webInstructions)
+            val imageInstructions = if (imagesEnabled) IMAGE_INSTRUCTIONS else ""
+            val instructions = listOf(formatInstructions, webInstructions, imageInstructions)
                 .filter { it.isNotBlank() }
                 .joinToString(" ")
 
+            val earlier = if (imagesEnabled) previousImagesBase64 else emptyList()
             val input = buildList {
                 // Prior turns as plain-text messages (Responses API accepts string content)
                 history.forEach { msg ->
@@ -345,12 +358,18 @@ class ChatRepository @Inject constructor(
                 // Responses API image format matches docs:
                 // https://docs.x.ai/developers/model-capabilities/images/understanding
                 // (POST https://api.x.ai/v1/responses, type=input_image, data-URL or https URL).
-                if (imageBase64List.isNotEmpty()) {
+                if (imageBase64List.isNotEmpty() || earlier.isNotEmpty()) {
                     val promptText = text.ifBlank {
                         if (imageBase64List.size == 1) "Describe this image."
                         else "Describe these images."
                     }
                     val parts = buildList {
+                        if (earlier.isNotEmpty()) {
+                            add(InputContent(type = "input_text", text = PREVIOUS_IMAGES_NOTE))
+                            for (imageBase64 in earlier) {
+                                add(InputContent(type = "input_image", imageUrl = "data:image/jpeg;base64,$imageBase64"))
+                            }
+                        }
                         for (imageBase64 in imageBase64List) {
                             add(
                                 InputContent(
@@ -373,7 +392,9 @@ class ChatRepository @Inject constructor(
                 model = AppDefaults.normalizeChatModel(model),
                 input = input,
                 instructions = instructions,
-                tools = listOf(ResponseTool(type = "web_search")) + if (trainsAvailable) TRAIN_TOOLS else emptyList(),
+                tools = listOf(ResponseTool(type = "web_search")) +
+                    (if (imagesEnabled) listOf(ResponseTool(type = "image_generation")) else emptyList()) +
+                    (if (trainsAvailable) TRAIN_TOOLS else emptyList()),
                 // Slightly lower temperature for timetable / factual transit answers
                 temperature = if (transitEnquiry) 0.3 else 0.7,
                 // Thinking time dominates wall clock: the API defaults to "high", which
@@ -400,7 +421,7 @@ class ChatRepository @Inject constructor(
                 val requestJson = gson.toJson(redactImagesForLog(request))
                 debugLogRepository.logOutgoing(
                     summary = "POST /v1/responses stream | model=${request.model} | turns=${input.size} | " +
-                        "images=${imageBase64List.size} | tools=web_search | transit=$transitEnquiry",
+                        "images=${imageBase64List.size}+${earlier.size} | tools=${request.tools?.joinToString(",") { it.name ?: it.type }} | transit=$transitEnquiry",
                     body = requestJson
                 )
                 Log.d(TAG, "REQUEST: ${sanitizeLogBody(requestJson, maxChars = 4000)}")
@@ -413,6 +434,7 @@ class ChatRepository @Inject constructor(
                 note("rail", if (transitEnquiry) "yes" else "no")
                 note("prompt", text.length)
                 note("images", imageBase64List.size)
+                if (earlier.isNotEmpty()) note("earlier images", earlier.size)
                 note("history", "${history.size} msgs ${"%,d".format(history.sumOf { flattenText(it).length })} chars")
             }
 
@@ -466,6 +488,7 @@ class ChatRepository @Inject constructor(
             // The request is resent whole with the calls and results appended, because
             // requests are not stored at xAI (store=false) to refer back to.
             val allCitations = LinkedHashSet<String>(call.citations)
+            val madeImages = call.images.toMutableList()
             var searchedWeb = call.usedWebSearch
             val usages = mutableListOf<ResponsesUsage>()
             call.response?.usage?.let { usages += it }
@@ -479,13 +502,22 @@ class ChatRepository @Inject constructor(
                 request = request.copy(input = request.input + call.functionCalls + outputs)
                 call = executeResponses(apiKey, request, debugMode, onProgress, timing)
                 allCitations += call.citations
+                madeImages += call.images
                 searchedWeb = searchedWeb || call.usedWebSearch
                 call.response?.usage?.let { usages += it }
             }
             val response = call.response
+            // Written to files at once: the conversation keeps their locations, not megabytes of base64.
+            val imageFiles = madeImages.distinctBy { it.id }.mapNotNull { image ->
+                runCatching { GeneratedImages.save(context, image.id, image.base64) }
+                    .onFailure { Log.w(TAG, "Couldn't save generated image ${image.id}: ${it.message}") }
+                    .getOrNull()
+            }
+            if (imageFiles.isNotEmpty()) timing?.note("images made", imageFiles.size)
             val baseMessage = response?.let { extractText(it) }.orEmpty()
                 .ifBlank { call.accumulatedText }
-                .ifBlank { "No response" }
+                // A picture can be the whole answer.
+                .ifBlank { if (imageFiles.isNotEmpty()) "" else "No response" }
             val citations = LinkedHashSet<String>().apply {
                 if (response != null) addAll(extractCitations(response))
                 addAll(allCitations)
@@ -518,7 +550,16 @@ class ChatRepository @Inject constructor(
                 Log.d(TAG, "RESPONSE: ${sanitizeLogBody(responseJson, maxChars = 4000)}")
             }
 
-            Result.success(ChatResult(assistantMessage, usage, model = request.model, usedWebSearch = usedWebSearch, citations = citations))
+            Result.success(
+                ChatResult(
+                    assistantMessage,
+                    usage,
+                    model = request.model,
+                    usedWebSearch = usedWebSearch,
+                    citations = citations,
+                    images = imageFiles
+                )
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {
@@ -583,7 +624,8 @@ class ChatRepository @Inject constructor(
         val accumulatedText: String,
         val citations: List<String>,
         val usedWebSearch: Boolean,
-        val functionCalls: List<FunctionCallItem> = emptyList()
+        val functionCalls: List<FunctionCallItem> = emptyList(),
+        val images: List<GeneratedImageData> = emptyList()
     )
 
     /**
@@ -755,6 +797,10 @@ class ChatRepository @Inject constructor(
                 override fun onSearchCall() {
                     timing?.searchStarted()
                 }
+
+                override fun onImageStarted() {
+                    onProgress?.invoke(ChatProgress.Status(IMAGE_STATUS))
+                }
             }
             val parsed = try {
                 ResponsesSseParser(gson, listener).parse(counting)
@@ -775,7 +821,8 @@ class ChatRepository @Inject constructor(
                 accumulatedText = parsed.accumulatedText,
                 citations = parsed.citations,
                 usedWebSearch = parsed.usedWebSearch,
-                functionCalls = parsed.functionCalls
+                functionCalls = parsed.functionCalls,
+                images = parsed.images
             )
         }
         } finally {
@@ -940,6 +987,28 @@ class ChatRepository @Inject constructor(
 
 /** Shown while the app fetches live train times for Grok. */
 internal const val TRAINS_STATUS = "Checking live train times\u2026"
+
+/** Shown while Grok Imagine is drawing; a picture takes several seconds. */
+internal const val IMAGE_STATUS = "Creating an image\u2026"
+
+/**
+ * Why the model reached for the image tool before: asked to put a person in a car from
+ * a photo, Grok replied that it can't redraw or generate images, because nothing told it
+ * that it can. The tool runs at xAI; the picture is returned with the answer.
+ */
+internal const val IMAGE_INSTRUCTIONS =
+    "You can create pictures, and edit pictures the user attaches, with the image_generation " +
+        "tool (Grok Imagine). When the user asks for an image, a drawing, a photo of something, " +
+        "or a change to a picture (adding or removing people or things, a new background, a " +
+        "different style), call image_generation instead of saying you can't make or edit " +
+        "images. Write the image prompt in detail. The picture is shown to the user with your " +
+        "reply, so keep the reply to a sentence or two about it. Never claim to have made a " +
+        "picture without calling the tool. Don't call it when the user only asks about a picture."
+
+/** Put before pictures resent from the previous answer, so the model knows what they are. */
+internal const val PREVIOUS_IMAGES_NOTE =
+    "(For reference: the picture(s) you made in your previous reply, in case this message " +
+        "asks for changes to them.)"
 
 /** Rounds of tool calls allowed in one answer, so a confused model cannot loop. */
 internal const val MAX_TOOL_ROUNDS = 4

@@ -163,6 +163,26 @@ class DocumentEnhancerTest {
     }
 
     @Test
+    fun aBrightColourLogoOnWhitePaperKeepsItsColour() {
+        // Reported from a real scan: a lime-green logo was taken for paper, divided out to
+        // white, and left as a green rim round a pale centre.
+        val px = IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            if (x in 60 until 240 && y in 300 until 520) argb(0.62f, 0.91f, 0.44f) else argb(0.92f, 0.90f, 0.88f)
+        }
+        DocumentEnhancer.enhance(ArrayPixelGrid(w, h, px))
+        val centreG = mean(px, 410, 140, 160, ::g)
+        val centreR = mean(px, 410, 140, 160, ::r)
+        val centreB = mean(px, 410, 140, 160, ::b)
+        assertTrue("centre is still green: r=$centreR g=$centreG b=$centreB", centreG - centreR > 0.15f && centreG - centreB > 0.3f)
+        val nearEdge = mean(px, 410, 66, 86, ::g) - mean(px, 410, 66, 86, ::b)
+        assertTrue("evenly green: centre ${centreG - centreB} vs edge $nearEdge", abs((centreG - centreB) - nearEdge) < 0.05f)
+        // And the paper round it is still white.
+        assertTrue(mean(px, 100, 5, 40, ::luma) > 0.95f)
+    }
+
+    @Test
     fun resultDoesNotDependOnHowTheWorkIsSplit() {
         // Bands are processed in place, each borrowing a few original rows from its
         // neighbours. Any mistake there shows up as a seam; identical output proves none.
@@ -204,6 +224,40 @@ class DocumentEnhancerTest {
             px[y * w + x] = argb(rnd.nextFloat(), 0.3f + 0.5f * x / w, 0.2f + 0.6f * y / (h / 3f))
         }
         assertTrue(looksLikePrint(ArrayPixelGrid(w, h, px)))
+    }
+
+    @Test
+    fun `a brightly coloured card does not count as print`() {
+        // The lime bank card that came out white with green halos: one bright, even colour,
+        // which made it look like paper.
+        val rnd = Random(4)
+        val px = IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            val n = (rnd.nextFloat() - 0.5f) * 0.04f
+            when {
+                x in 40 until 120 && y in 100 until 200 -> argb(0.85f + n, 0.70f + n, 0.40f + n) // chip
+                x in 180 until 270 && y in 500 until 800 -> argb(0.10f + n, 0.10f + n, 0.30f + n) // logo
+                else -> argb(0.62f + n, 0.91f + n, 0.44f + n)
+            }
+        }
+        val share = paperShare(ArrayPixelGrid(w, h, px))
+        assertTrue("paper share $share", share < 0.1f)
+        assertTrue(!looksLikePrint(ArrayPixelGrid(w, h, px)))
+    }
+
+    @Test
+    fun `paper colours are told from coloured things`() {
+        assertTrue("white", isPaperColour(0.92f, 0.90f, 0.88f))
+        assertTrue("cream", isPaperColour(0.95f, 0.91f, 0.80f))
+        assertTrue("yellow stock", isPaperColour(0.92f, 0.87f, 0.50f))
+        assertTrue("white paper in lamplight", isPaperColour(1.00f, 0.78f, 0.51f))
+        assertTrue("pale green stock", isPaperColour(0.78f, 0.94f, 0.78f))
+        assertTrue("pale pink stock", isPaperColour(1.00f, 0.82f, 0.86f))
+        assertTrue("lime", !isPaperColour(0.62f, 0.91f, 0.44f))
+        assertTrue("orange", !isPaperColour(1.00f, 0.55f, 0.00f))
+        assertTrue("navy", !isPaperColour(0.10f, 0.15f, 0.45f))
+        assertTrue("magenta", !isPaperColour(0.95f, 0.30f, 0.80f))
     }
 
     @Test

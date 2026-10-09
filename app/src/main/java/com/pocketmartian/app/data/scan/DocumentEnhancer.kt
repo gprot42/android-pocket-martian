@@ -1,5 +1,6 @@
 package com.pocketmartian.app.data.scan
 
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -36,6 +37,11 @@ internal class ArrayPixelGrid(override val width: Int, override val height: Int,
  * photograph all of that is damage. Reported from a real scan: a full-colour magazine
  * cover came out posterised and smeared. Measured on real pages, letters and forms score
  * 0.93 to 1.00 and that cover 0.14, so the line between them is not delicate.
+ *
+ * Even, bright and one colour is not enough on its own, though: the main colour must also
+ * be one paper can have (see [isPaperColour]). Reported from a real scan: a lime-green
+ * bank card scored as paper, so its green was divided out to white, leaving green halos
+ * round the chip and logo and a pink chip.
  */
 internal fun paperShare(page: PixelGrid): Float {
     val stride = max(1, max(page.width, page.height) / PAPER_SAMPLES_PER_SIDE)
@@ -74,13 +80,39 @@ internal fun paperShareOf(samples: IntArray): Float {
         counts[bin(red(i) - green(i)) * bins + bin(blue(i) - green(i))]++
     }
     val mode = counts.indices.maxByOrNull { counts[it] } ?: return 1f
+    val modeU = mode / bins
+    val modeV = mode % bins
     var paper = 0
-    for (du in -1..1) for (dv in -1..1) {
-        val u = mode / bins + du
-        val v = mode % bins + dv
-        if (u in 0 until bins && v in 0 until bins) paper += counts[u * bins + v]
+    var sumR = 0L
+    var sumG = 0L
+    var sumB = 0L
+    for (i in 0 until n) {
+        if (luma[i] < PAPER_MIN_BRIGHTNESS * white) continue
+        if (abs(bin(red(i) - green(i)) - modeU) > 1 || abs(bin(blue(i) - green(i)) - modeV) > 1) continue
+        paper++
+        sumR += red(i)
+        sumG += green(i)
+        sumB += blue(i)
     }
+    if (paper == 0) return 0f
+    if (!isPaperColour(sumR.toFloat() / paper, sumG.toFloat() / paper, sumB.toFloat() / paper)) return 0f
     return paper.toFloat() / n
+}
+
+/**
+ * Whether a sheet's main colour could be paper, as photographed: white, cream or a pastel
+ * stock, under daylight, lamplight or anything between. Lighting moves colours along the
+ * warm to cool line (reds and yellows against blues) and rarely by much after the camera's
+ * white balance; paper stocks are pale. A strong colour, or a green or magenta tint, which
+ * no ordinary light gives white paper, is a coloured object instead: a card, a cover, a
+ * painted wall.
+ */
+internal fun isPaperColour(red: Float, green: Float, blue: Float): Boolean {
+    val top = maxOf(red, green, blue)
+    if (top <= 0f) return false
+    val saturation = (top - minOf(red, green, blue)) / top
+    val greenOrMagenta = abs(green - (red + blue) / 2f) / top
+    return saturation <= MAX_PAPER_SATURATION && greenOrMagenta <= MAX_PAPER_GREEN_MAGENTA
 }
 
 /** Whether a flattened page is print on paper, which enhancement suits, or mostly pictures. */
@@ -92,6 +124,12 @@ private const val PAPER_SAMPLES_PER_SIDE = 160
 private const val PAPER_MIN_BRIGHTNESS = 0.6f
 private const val PAPER_COLOUR_BIN_WIDTH = 10 // of 255: about 0.04
 private const val PAPER_COLOUR_BINS = 16
+
+/** Yellow stock measures about 0.46, white paper in uncorrected lamplight about 0.5. */
+private const val MAX_PAPER_SATURATION = 0.6f
+
+/** Pale green or pink stock measures about 0.17; the lime card that prompted this, 0.42. */
+private const val MAX_PAPER_GREEN_MAGENTA = 0.3f
 
 /**
  * Turns a photograph of a page into something that reads like a scan.
@@ -136,6 +174,14 @@ internal object DocumentEnhancer {
 
     /** Nothing darker than this share of the page's typical paper is treated as paper. */
     private const val PAPER_FLOOR = 0.6f
+
+    /**
+     * Nor is anything whose colour, brightness apart, differs from the typical paper's by
+     * more than this, in shares of the total (r, g, b) / (r + g + b). Light falling unevenly
+     * across a page shifts it by a few hundredths; a lime logo on white paper by 0.13,
+     * highlighter yellow by 0.14.
+     */
+    private const val PAPER_TINT_TOLERANCE = 0.08f
 
     /** Rows of neighbouring context a block needs so its blurs are exact at the seams. */
     private const val PAD = 8
@@ -434,22 +480,32 @@ internal object DocumentEnhancer {
                         counts[cell]++
                     }
                 }
-                val planes = Array(3) { c ->
+                val shades = Array(3) { c ->
                     val mean = FloatArray(w * h) { i -> if (counts[i] > 0) sums[c][i] / counts[i] else 1f }
-                    val shade = dilate(mean, w, h, DILATE_RADIUS)
-                    // Dilation only removes dark things smaller than its window. Inside a
-                    // photo, a logo or a solid header the estimate would be the dark area
-                    // itself, and dividing by it would bleach that area. Real shading
-                    // rarely halves the light, so anything darker than a fraction of the
-                    // page's typical paper is not paper, and the typical paper stands in
-                    // for it. This happens *before* smoothing: done after, the blend from
-                    // real paper down to the dark value survives as a band of intermediate
-                    // estimates, and a solid colour block comes out with a glowing centre.
-                    val typical = shade.sorted()[shade.size * 3 / 4]
-                    val floor = PAPER_FLOOR * typical
-                    for (i in shade.indices) if (shade[i] < floor) shade[i] = typical
-                    smooth(shade, w, h)
+                    dilate(mean, w, h, DILATE_RADIUS)
                 }
+                // Dilation only removes things smaller than its window. Inside a photo, a
+                // logo or a solid header the estimate would be that area itself, and
+                // dividing by it would bleach it. Real shading rarely halves the light or
+                // changes paper's colour much, so anything much darker than the page's
+                // typical paper, or clearly of another colour, is not paper, and the
+                // typical paper stands in for it. Judged on all three colours together,
+                // so a coloured area is kept or replaced whole. This happens *before*
+                // smoothing: done after, the blend from real paper to the other value
+                // survives as a band of intermediate estimates, and a solid colour block
+                // comes out with a glowing centre, or a bright coloured one bleached with
+                // a coloured rim.
+                val typical = FloatArray(3) { c -> shades[c].sorted()[shades[c].size * 3 / 4] }
+                val typicalSum = typical.sum()
+                for (i in 0 until w * h) {
+                    val sum = shades[0][i] + shades[1][i] + shades[2][i]
+                    val dark = (0 until 3).any { c -> shades[c][i] < PAPER_FLOOR * typical[c] }
+                    val tinted = sum > 0f && typicalSum > 0f && (0 until 3).any { c ->
+                        abs(shades[c][i] / sum - typical[c] / typicalSum) > PAPER_TINT_TOLERANCE
+                    }
+                    if (dark || tinted) for (c in 0 until 3) shades[c][i] = typical[c]
+                }
+                val planes = Array(3) { c -> smooth(shades[c], w, h) }
                 return PaperMap(w, h, planes, scale)
             }
 

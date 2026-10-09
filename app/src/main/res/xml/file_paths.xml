@@ -6,4 +6,6 @@
     <cache-path name="scans" path="scans/" />
     <!-- A downloaded update, handed to the package installer -->
     <cache-path name="updates" path="updates/" />
+    <!-- Pictures Grok made, for Share -->
+    <files-path name="generated" path="generated/" />
 </paths>

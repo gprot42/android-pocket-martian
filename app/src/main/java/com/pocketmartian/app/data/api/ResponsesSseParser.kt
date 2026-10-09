@@ -18,6 +18,8 @@ import java.io.Reader
  * - `response.failed` / `error` — terminal error
  * - `response.web_search_call.*` — search ran
  * - `response.output_text.annotation.added` — citation URLs
+ * - `response.image_generation_call.*` and `image_generation_call` items — a picture
+ *   made with Grok Imagine, delivered whole as base64 in the finished item
  * - chat.completion.chunk (`choices[0].delta.content`) — fallback shape
  *
  * SSE comments (`:` lines) are keepalives and reset the HTTP read timeout;
@@ -41,7 +43,18 @@ internal interface ResponsesStreamListener {
 
     /** A web search call was added to the response: once per search. */
     fun onSearchCall() {}
+
+    /** Grok started making or editing a picture. */
+    fun onImageStarted() {}
 }
+
+/** A picture from the image_generation tool: [base64] is the image itself, no data-URL prefix. */
+internal data class GeneratedImageData(
+    val id: String,
+    /** What the model asked Grok Imagine for. */
+    val prompt: String?,
+    val base64: String
+)
 
 internal data class ParsedResponsesStream(
     val completed: ResponsesResponse? = null,
@@ -50,7 +63,9 @@ internal data class ParsedResponsesStream(
     val usedWebSearch: Boolean = false,
     val errorMessage: String? = null,
     /** Calls to the app's own tools; the model waits for their results. */
-    val functionCalls: List<FunctionCallItem> = emptyList()
+    val functionCalls: List<FunctionCallItem> = emptyList(),
+    /** Pictures made during this response, in the order they finished. */
+    val images: List<GeneratedImageData> = emptyList()
 )
 
 internal class ResponsesSseParser(
@@ -66,7 +81,17 @@ internal class ResponsesSseParser(
         var usedWebSearch = false
         var errorMessage: String? = null
         val functionCalls = LinkedHashMap<String, FunctionCallItem>()
+        val images = LinkedHashMap<String, GeneratedImageData>()
         val dataLines = ArrayList<String>()
+
+        // The finished item carries the picture; the completed response repeats it, so
+        // images are kept by id and each is taken once.
+        fun collectImage(item: JsonObject?) {
+            if (item?.str("type") != "image_generation_call") return
+            val result = item.str("result")?.takeIf { it.isNotBlank() } ?: return
+            val id = item.str("id") ?: "image${images.size + 1}"
+            if (id !in images) images[id] = GeneratedImageData(id = id, prompt = item.str("prompt"), base64 = result)
+        }
 
         fun collectFunctionCall(item: JsonObject?) {
             if (item?.str("type") != "function_call") return
@@ -97,7 +122,12 @@ internal class ResponsesSseParser(
                     }.getOrNull() ?: completed
                     collectCitations(payload, citations)
                     if (payloadHasWebSearch(payload)) usedWebSearch = true
-                    payload.arr("output")?.forEach { if (it.isJsonObject) collectFunctionCall(it.asJsonObject) }
+                    payload.arr("output")?.forEach {
+                        if (it.isJsonObject) {
+                            collectFunctionCall(it.asJsonObject)
+                            collectImage(it.asJsonObject)
+                        }
+                    }
                 }
                 "response.output_text.delta", "response.text.delta" -> {
                     obj.str("delta")?.let {
@@ -119,16 +149,26 @@ internal class ResponsesSseParser(
                         usedWebSearch = true
                         listener?.onSearchStarted()
                     }
+                    if (type?.startsWith("response.image_generation_call") == true) {
+                        listener?.onImageStarted()
+                    }
                     if (type == "response.output_item.added" || type == "response.output_item.done") {
                         val item = obj.obj("item")
                         // A function call arrives whole, not streamed in pieces.
-                        if (type == "response.output_item.done") collectFunctionCall(item)
+                        if (type == "response.output_item.done") {
+                            collectFunctionCall(item)
+                            collectImage(item)
+                        }
+                        if (item?.str("type") == "image_generation_call" && type == "response.output_item.added") {
+                            listener?.onImageStarted()
+                        }
                         if (item?.str("type") == "web_search_call") {
                             usedWebSearch = true
                             listener?.onSearchStarted()
                             if (type == "response.output_item.added") listener?.onSearchCall()
                         }
-                        collectCitations(item, citations)
+                        // A picture's base64 holds no links, and walking megabytes of it would not be free.
+                        if (item?.str("type") != "image_generation_call") collectCitations(item, citations)
                     }
                     // chat.completion.chunk fallback
                     val delta = obj.arr("choices")
@@ -163,7 +203,8 @@ internal class ResponsesSseParser(
             citations = citations.toList(),
             usedWebSearch = usedWebSearch || citations.isNotEmpty(),
             errorMessage = errorMessage,
-            functionCalls = functionCalls.values.toList()
+            functionCalls = functionCalls.values.toList(),
+            images = images.values.toList()
         )
     }
 

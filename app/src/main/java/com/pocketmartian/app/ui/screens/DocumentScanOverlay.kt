@@ -21,8 +21,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.RotateLeft
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -185,16 +191,12 @@ fun DocumentScanOverlay(
                             softWrap = false
                         )
                     }
-                    TextButton(onClick = viewModel::rotate, enabled = state.canConfirm) {
-                        Text("Rotate", maxLines = 1, softWrap = false)
-                    }
+                    RotateButtons(enabled = state.canConfirm, onRotate = viewModel::rotate)
                     TextButton(onClick = viewModel::adjustCorners, enabled = state.canConfirm) {
                         Text("Adjust corners", maxLines = 1, softWrap = false)
                     }
                 } else {
-                    TextButton(onClick = viewModel::rotate, enabled = state.canConfirm) {
-                        Text("Rotate", maxLines = 1, softWrap = false)
-                    }
+                    RotateButtons(enabled = state.canConfirm, onRotate = viewModel::rotate)
                     TextButton(onClick = viewModel::snapToEdges, enabled = state.canConfirm) {
                         Text("Snap", maxLines = 1, softWrap = false)
                     }
@@ -216,8 +218,12 @@ fun DocumentScanOverlay(
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 if (showingResult) {
-                    // Where the aligned page goes. Share leaves the scanner open, so one
-                    // scan can be sent to another app and added to the prompt as well.
+                    // Where the aligned page goes. Save and Share leave the scanner open,
+                    // so one scan can be kept, sent to another app and added to the
+                    // prompt as well.
+                    TextButton(onClick = viewModel::saveToGallery, enabled = state.canConfirm) {
+                        Text("Save", maxLines = 1, softWrap = false)
+                    }
                     OutlinedButton(
                         onClick = {
                             viewModel.share { file ->
@@ -248,6 +254,18 @@ fun DocumentScanOverlay(
                 }
             }
         }
+    }
+}
+
+/** A quarter turn either way, in the accent colour of the text buttons beside them. */
+@Composable
+private fun RotateButtons(enabled: Boolean, onRotate: (clockwise: Boolean) -> Unit) {
+    val colours = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+    IconButton(onClick = { onRotate(false) }, enabled = enabled, colors = colours) {
+        Icon(Icons.Default.RotateLeft, contentDescription = "Rotate left")
+    }
+    IconButton(onClick = { onRotate(true) }, enabled = enabled, colors = colours) {
+        Icon(Icons.Default.RotateRight, contentDescription = "Rotate right")
     }
 }
 

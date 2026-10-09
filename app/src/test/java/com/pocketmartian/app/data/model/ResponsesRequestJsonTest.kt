@@ -60,4 +60,16 @@ class ResponsesRequestJsonTest {
         assertTrue(AppDefaults.EFFORT_HIGH in allowed)
         assertEquals("low", AppDefaults.EFFORT_LOW)
     }
+
+    @Test
+    fun theImageToolIsSentAsDocumented() {
+        // https://docs.x.ai/developers/tools/image-generation: {"type": "image_generation"}
+        val body = json(
+            ResponsesRequest(
+                input = listOf(InputMessage(role = "user", content = "draw a cat")),
+                tools = listOf(ResponseTool(type = "web_search"), ResponseTool(type = "image_generation"))
+            )
+        )
+        assertTrue(body, body.contains("{\"type\":\"image_generation\"}"))
+    }
 }
