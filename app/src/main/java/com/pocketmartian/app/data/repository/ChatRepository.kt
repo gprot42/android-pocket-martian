@@ -112,7 +112,7 @@ data class ChatResult(
 sealed class ApiKeyCheckResult {
     data class Valid(
         val modelCount: Int,
-        /** A few model ids for the UI (e.g. grok-4.5). */
+        /** A few model ids for the UI (e.g. grok-4.7). */
         val sampleModels: List<String>
     ) : ApiKeyCheckResult()
 

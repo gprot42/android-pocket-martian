@@ -4,7 +4,6 @@ package com.pocketmartian.app
 object AppDefaults {
     const val MODEL_GROK_4_7 = "grok-4.7"
     const val MODEL_GROK_4_6 = "grok-4.6"
-    const val MODEL_GROK_4_5 = "grok-4.5"
 
     /**
      * There is no id here for "Grok 4.7 Fast". It is the same model on faster hardware at
@@ -19,11 +18,13 @@ object AppDefaults {
     /** Used when the chosen model is rejected as unknown/unavailable by the API. */
     const val BACKUP_MODEL = MODEL_GROK_4_6
 
-    /** Models the user can pick in Settings. */
+    /**
+     * Models the user can pick in Settings. Anything else that was saved before, such as
+     * 4.5 or earlier, becomes the default (see [normalizeChatModel]).
+     */
     val CHAT_MODELS: List<Pair<String, String>> = listOf(
         "4.7" to MODEL_GROK_4_7,
-        "4.6" to MODEL_GROK_4_6,
-        "4.5" to MODEL_GROK_4_5
+        "4.6" to MODEL_GROK_4_6
     )
 
     fun isKnownChatModel(id: String): Boolean =

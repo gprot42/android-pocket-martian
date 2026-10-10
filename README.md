@@ -1,304 +1,67 @@
-# Pocket Martian - Android Client
+# Pocket Martian
 
-A lightweight native Android app for chatting with xAI's Grok models.
+An unofficial Android app for chatting with xAI's Grok, using your own API key.
 
-*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for understanding something completely. **Pocket Martian** nods to that origin without borrowing xAI's mark.
+*Grok* is a Martian word, from Robert A. Heinlein's *Stranger in a Strange Land*, for
+understanding something completely. **Pocket Martian** nods to that origin without
+borrowing xAI's mark.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Pocket Martian chat" width="280">
 </p>
 
-## Features
+## What it does
+
+- **Chat with Grok 4.7 or 4.6**, with answers streaming in as they're written.
+- **Live web search** when a question needs current facts, with the sources linked.
+- **Pictures with Grok Imagine:** ask for a picture, or attach a photo and ask for a change.
+- **Document scanner without Google Play services:** photograph a page, get a straight,
+  clean scan.
+- **Speak your prompt,** and a real-time **voice translator**.
+- **Live UK train times** with your own Realtime Trains token.
+- **Share in and out:** send text, links and pictures to the app from any other app, and
+  share answers back out.
+- **Your data stays on your phone:** your key and conversations are kept in the app's
+  private storage. What you ask goes to xAI to be answered; the developer receives
+  nothing. See [Privacy](docs/user-guide.md#privacy).
+
+## Get started
+
+1. Install the latest APK from [Releases](https://github.com/gprot42/android-pocket-martian/releases).
+   The app checks there for updates once a day.
+2. Create an API key at [console.x.ai](https://console.x.ai) and add **API credits**.
+   A SuperGrok subscription doesn't cover this app.
+3. In the app, open **Settings → Account** and paste the key.
+
+Requires Android 7.0 or later.
+
+## Docs
+
+- [User guide](docs/user-guide.md): chatting, voice, pictures, settings, costs and
+  troubleshooting
+- [Document scanner](docs/scanner.md)
+- [UK trains and transport](docs/uk-trains.md)
+
+## Building
 
-- Secure API key entry and storage in Settings
-- **Credits & usage** screen (**Settings → Billing → Credits & usage**): live prepaid API balance, postpaid limits, model rate quotas via Management API; SuperGrok plan reference (consumer quotas are not exposed by API)
-- Three themes: Light, Dark, Tokyo Night
-- Chat models: **Grok 4.7** (default), **4.6** or **4.5**, selectable in Settings; 4.6 is used automatically if your choice is unavailable. Grok 4.7 Fast is deliberately absent: it is the same model on faster hardware at twice the rates, and xAI serves it only through Cursor and Grok Build, not on the public API
-- Uses xAI Agent Tools / Responses API (`https://api.x.ai/v1/responses`)
-- **Live web search**: when Grok is unsure or a question depends on recent/factual information, it automatically uses the `web_search` tool instead of guessing. Source links are appended to answers (tap to open, long-press to copy)
-- **A tidier chat screen**: the top bar is the title and four icons of one size (New chat, Scan, Settings, ⋮), with Voice translator, History, Share conversation, Resend and Logs in the ⋮ menu, instead of a mix of words and an icon that cut the title short at large text sizes. The composer is one rounded **Ask Grok…** field with attach and the microphone inside, and a round button beside it that sends, queues (while a reply is arriving) or stops. It replaces five text buttons under the field that clipped and sat greyed out most of the time. Your messages are bubbles on the right (hold one to copy it); each answer has copy and share icons beneath it and sits on the page, not on a grey block; sources are compact chips with the site's name. Errors are a card with **Retry** where retrying makes sense. **New chat** offers **Undo**. On the light theme the status bar's clock and icons are now dark, not white on white
-- **Pictures with Grok Imagine**: ask for a picture ("draw a red sports car at dusk") or attach a photo and ask for a change ("put me in a Lamborghini") and Grok makes or edits it with Grok Imagine (`grok-imagine-image-2.0`), on its own, the same way it decides to search the web. The picture appears full width in the answer; tap it to zoom, and **Save** puts it in Pictures/Pocket Martian or **Share** sends it on. A follow-up such as "now make it night" edits the last picture, which is sent back with the next prompt for that purpose. Pictures are kept with the saved conversation and deleted once no conversation uses them. Each costs US$0.04 on top of the usual tokens (included in the cost shown per answer); **Settings → Chat → Create images** turns it off. Before this, Grok answered such requests with "I can't redraw or generate images", because nothing gave it the tool
-- **Live UK train times** with your own [Realtime Trains](https://www.realtimetrains.co.uk) token: Grok reads live departures, delays, cancellations, platforms and arrival times from Network Rail's running data instead of searching the web for them (see [UK train times (Realtime Trains)](#uk-train-times-realtime-trains))
-- **UK transit lookups**: prefers official National Rail / TOC sites for live times and disruptions (see [UK transit web sources](#uk-transit-web-sources)); open web for everything else
-- **GPS location** (on by default; optional — turn off in Settings): so you can ask things like *“find me transport from my current location to X”* without naming a station. Approximate coordinates/place are attached to the prompt when permission is granted; the model uses them with web search (National Rail, Thameslink, TfL, etc.) to plan from nearest stations/stops. Not required for general chat
-- Clean Jetpack Compose UI with MVVM architecture
-- Chat with message history (in-memory for now) plus response history screen
-- **Share to Pocket Martian**: from any app, share text, links, or images into the chat prompt (also in the text-selection menu as **Ask Pocket Martian**). Share a Grok reply or the whole conversation back out via the system share sheet
-- Pinch-to-zoom on the whole chat screen
-- Image attach on prompts
-- Voice translator (optional, Grok Voice API)
-- Debug mode with API request/response logs
-- Show estimated cost per query (optional)
-- **Streaming** Responses API (SSE) for chat + `web_search`, with HTTP/2 pings, so long reasoning/search does not hit “Timed out contacting api.x.ai”
-- **Network resilience** (see [Network resilience](#network-resilience)): DNS-over-HTTPS fallback when the network's resolver can't find `api.x.ai`, IPv4-first connects, short connect timeout with up to 3 attempts, and an instant “offline” message instead of a long stall
-- **Faster sends**: the TLS connection to `api.x.ai` is opened when the app starts / you begin typing, GPS waits at most 3 s at send time (falls back to the cached fix), and chat history sent as context is capped by size
-- **Document scanner, no Google Play services**: tap the scan icon in the top bar, photograph a page with your phone's own camera app, and the page is found, squared up and ready to attach or share. The page is located on the phone when it can be (instantly, offline) and by Grok's vision when it cannot; the corners are then tightened onto the real paper edges and the page is flattened with Android's built-in perspective transform. Corners stay draggable, and **Snap** re-aligns them to the nearest paper edge. See [Document scanner](#document-scanner)
-- **Answers survive the app closing**: the conversation and any half-typed prompt are kept on the phone (app-private storage, excluded from cloud backup) and come back when the app reopens, whether it was closed by a crash or by Android reclaiming memory. **Clear** removes the saved copy too. About shows why the app last stopped (Android 11+)
-- **Very long answers no longer crash the app**: Compose cannot lay out anything taller than 262,143 px, and an answer's height was passed to it unchecked. Two real crashes were exactly that (`Can't represent a width of 0 and height of 434309 in Constraints`). Answers are now capped at 200,000 px, about 3,000 lines, with a note pointing to the answer's own Copy and Share buttons for the rest
-- **Sent once, stopped for real, never paid twice**: a prompt is shown and the composer emptied the instant Send is tapped; before, it stayed in the composer while the app signed in and read its settings, and a second tap sent it again (likewise a second tap while Android's location question was opening). Stop ignores taps for 0.7 s after a send, because Send turns into Stop under the finger. Stop and New chat now cancel the request itself, which closes the connection and tells the server to stop: they used to end the reply on screen while the answer kept streaming, and billing, to the end. And a stream that breaks after part of the answer has arrived (a Wi-Fi to mobile handover) is reported rather than sent again, which re-ran its searches and billed it twice
-- **While Grok searches, the screen says so**: Grok often writes a line ("Checking current rates…") before searching. The line now appears in full (the last words before a pause used to wait for the next ones) with "Searching the web…" and moving dots beneath it, scrolled into view
-- **Steadier under the hood**: progress from the network is applied on the main thread, so it can no longer undo a keystroke or a Stop; a stopped or replaced reply can't write into the next one; a second prompt queued while one waits is added to it instead of replacing it; a second tap on New chat no longer loses Undo; attached photos are decoded off the main thread at reduced size, so a very large photo can't freeze or crash the app; pictures and history are saved off the main thread; finished answers release their web views; and the scanner turns one quarter at a time however fast Rotate is tapped
-- **Answers that arrive in the background are shown**: a reply that finished while the app was out of sight (a long web search with the phone in a pocket) could appear as just its sources and buttons, with the answer itself missing, though History had all of it. Each answer is drawn by a web view that reads back its height, and one that loads while not on screen lays nothing out, so the few readings taken in the first fraction of a second were all zero and the view stayed one pixel tall. It now measures again whenever it is shown or changes width, keeps looking for a few seconds, and ignores readings taken before it has a width
-- **Scrolling during a reply**: scrolling up while an answer streams in now stays put. Follow-the-bottom is switched back on when you send, not on every streamed word
-- **Updates from GitHub**: once a day the app checks this repository's latest release and offers it in a banner (**Not now** hides it for that version). **Settings → App updates** checks on demand or turns the daily check off. Install downloads the universal APK and hands it to Android's installer, which asks you to confirm, and first to allow Pocket Martian to install apps. Android refuses any file not signed with the same key as the installed app. The Google Play version leaves this out and is updated by Play, as Play requires
-- **Never stuck waiting**: **Stop** cancels a reply that is taking too long, typing while a reply arrives queues your next prompt (it sends itself when the current one lands), and **Clear** also stops anything in flight
-- **Live replies**: the answer streams onto the screen as Grok writes it, with a **Searching the web** status while it looks things up, instead of a motionless indicator until the whole reply lands
-- **Reasoning effort tuned per question**: ordinary questions use `low` effort (the API default is `high`, which spends tens of seconds thinking before the first token); rail/transit questions keep `high`. Agentic tool turns are capped so a vague question cannot loop through searches indefinitely
-- **Only real transport questions get the slow rail treatment**: the rail playbook (high effort, twelve search rounds, and an order to search National Rail before answering) used to fire on any "from … to", any "get/go … to", and words like "delay" or "journey". Replayed on everyday prompts it caught 15 of 24 unrelated ones, among them "Translate this from English to German", "How do I get my dog to stop barking" and "Convert 150 pounds from GBP to EUR". It now needs a transport cue: a named network or operator, a train or bus as transport ("next train", "bus times"), or a route question ("how do I get to …"). Ordinary prompts also no longer wait up to 3 s for a GPS fix, and place names are looked up once per location rather than on every send. When a GPS fix does fail (indoors, with no network location to fall back on, the phone's timings showed a full 3 s wait for nothing), prompts stop waiting for five minutes while a background attempt tries to have a fix ready for the next one
-- **Past answers go back as plain text**: every prompt resends the recent conversation for context, and the saved conversation now carries it across sessions (one six-character prompt went out as 8,861 tokens). The same messages are chosen as before, but answers are sent as their words, not their HTML: list items, table rows, code and link addresses are kept, tags and entities are not, about a third smaller on a typical answer
-- **Speak your prompt**: the microphone in the prompt box records you; tap it again (or **Done**) and Grok's speech-to-text (`POST /v1/stt`, `grok-voice-transcribe-2.0`) turns it into text, added after whatever you had typed, ready to edit and send. Any language: the language is left for Grok to detect. Android's own dictation was not an option: it needs an installed recognition service, normally Google's, and a phone without Google services has none. Audio is recorded as 16 kHz mono, kept only in memory, sent once and not stored; listening stops by itself after two minutes. Each dictation gets a timing line in **Logs** like any prompt
-- **Every prompt is timed**: one line per prompt with when the request left the phone, when xAI answered, the first word, the end, how many web searches ran and how many tokens went on reasoning. Numbers only, never the prompt or answer. It appears in **Settings → App → Logs** (Debug mode not needed; **Copy All** to share it), in the system log under the tag `RequestTiming`, and in a file of the last 300 prompts that survives restarts. Example: `grok-4.7 effort=low turns=6 rail=no | request sent 13ms · response headers 480ms · first text 3.9s · done 7.2s (auth 5ms, location 5ms) | 1 searches | in 2,104 out 612 reasoning 310 | ok`
-- **Connection drops ride out a VPN reconnect**: when api.x.ai cannot be reached at all ("no route to host", refused, DNS), the app tries four times over about seven seconds instead of three times over two, and says which it was: "Couldn't reach" for a connection that never opened, "dropped" for one lost mid-answer, and whether a VPN is on
-
-## Document scanner
-
-Built to work without Google Play services, ML Kit or OpenCV. Tap the scan icon in the top bar and pick a source:
-
-- **Take a photo**: quick capture through a camera intent. Convenient, but on some phones, Pixels among them, quick capture skips the multi-frame processing the full camera app applies. In a dim room that means one noisy, heavily smoothed frame, and small print comes out soft however it is processed afterwards. Use good light or turn the flash on.
-- **Choose a photo**: align a picture you already have. Shooting with your full camera app first and choosing that photo gives the sharpest scans by a wide margin.
-
-This was established the hard way: a user's scan was mush while their camera-app photo of the same page was crisp, and feeding that photo through the identical pipeline produced a crisp scan. The processing was never the limit; the input was.
-
-The scanner shows the facts it is working with, for example `Photo 4080 × 3072 · page about 2100 × 2900 px`, so you can see at a glance whether to move closer. For a sharp scan, fill the frame with the page: detail that was never captured cannot be recovered. If a page ever has to be produced from the reduced preview instead of the original photo, the scanner says so rather than failing quietly, and with Debug mode on each save is recorded in the log with its size and how it was produced.
-
-1. **Capture** uses a plain camera intent, so any camera app works (including on de-Googled phones) and Pocket Martian needs no camera permission.
-2. **Find the page, on the phone first.** A light page on a darker surface, or the reverse, is located in milliseconds with no network: shrink and median-filter the photo until texture and print drop out, split it into two brightness classes, and reduce a region's outline to four corners. Which class is the page is deliberately not decided up front. Every rule tried for that failed somewhere: "the page is whatever the photo's border is not made of" breaks the moment a page fills the frame and runs off a side, which is exactly what a sharp scan needs, and "the page is whatever is in the middle" turns a bare carpet into a full-frame page. So both readings are proposed and the edge check decides, because only a real page is bounded by straight paper edges. Every side must be either confirmed on a real paper edge or lie along the photo's border where the page runs out of frame, with at least one real side. That rejects a tidy-looking shape produced by uneven lighting, and a bare surface.
-
-   **Repair, don't reject.** Anything bright touching the page, such as a hand holding it, a cloth or a second sheet, merges with it in the brightness split, and the proposed side there runs through the clutter instead of along the paper. Rather than discard an outline that is right on three sides, the unconfirmed side is searched for: a trial line is walked inward from where it was proposed, held parallel to the confirmed opposite side, until a real paper edge is confirmed.
-
-   **Pages that fill the frame.** A side that is out of frame is reconstructed rather than left on the photo's border. The border is not a paper edge: used as one, it makes the warp straighten the top of the page while leaving the bottom tilted. A sheet has parallel opposite sides, so the missing side is drawn parallel to its visible opposite (or square to a visible neighbour), far enough out to keep everything the camera saw. The resulting corners may sit slightly outside the photo; the editor shows and grabs them at the border.
-3. **Ask Grok when that is not confident**, for example white paper on white marble, or a cluttered scene. A reduced copy of the photo (about 1024 px) goes to Grok, which returns the four corners. **Ask Grok** in the scanner forces this.
-4. **Make it straight.** Whichever route found the page, it is only accurate to a percent or so, which shows up as a tilted scan. So the app walks along each rough edge, works out where the paper begins at dozens of points, fits a straight line through them, and uses the line intersections as the corners.
-5. **Let the print decide what is level.** Paper edges are what the outline is fitted to, and they can mislead: a plastic sleeve or a sheet underneath shows a straighter, stronger edge just beyond the real one, and printers rarely lay text perfectly square to the sheet anyway. One real scan sloped +0.75° near the top and +1.05° near the bottom although its outline looked right. Lines of print are the ground truth for "straight", so they get the final say. The page is flattened at low resolution with the current outline and the slant of the print is measured in its upper and lower parts: lines of text have sharp tops and bottoms, so summing vertical brightness changes along rows sheared by a trial angle gives a spiky profile at the true angle and a smeared one at any other. Working from brightness *changes* makes this indifferent to uneven lighting. The top and bottom sides of the outline are then turned about their midpoints to match. A slant that differs between top and bottom is a side fitted to the wrong edge, and correcting the two sides separately removes that as well as a plain rotation. Nothing happens when there is too little print, when the measurement does not stand out clearly, or when the slant is under 0.12°, so a photograph or a drawing is left exactly as the edges had it. Applies to automatic outlines and to Snap, not to corners you placed by hand.
-6. **Flatten, from the original capture.** Android's own four-point perspective transform maps the page to an upright rectangle. The editor works on a reduced preview, but the page is cut from the photo *as stored*, at up to 3508 px on the long side (A4 at 300 dpi) and never enlarged. Only the page's bounding box is decoded, so a 50-megapixel capture costs no more memory than the page needs. Cutting the page out of the preview instead, as earlier versions did, kept under half the detail whenever the page did not fill the frame. **True proportions.** The lengths of a page's sides in a photo do not give its shape: a phone tilted over a page sees the far end smaller *and the whole page shorter*, and sizing the output from side lengths corrects the first while ignoring the second. Real scans showed it (an A4 letter at 1.387 instead of 1.414, a tabloid front page visibly squat), and a simulated camera puts numbers on it: 9% too short at a 10° tilt, 23% at 25°. The textbook remedy recovers the camera's focal length from the page's two vanishing points, and cannot be used as published, because a phone is nearly always tilted one way only, which puts one vanishing point at infinity and makes the focal length 0/0: on five real outlines it returned nothing, or a focal length of seven to sixteen times the photo. But the focal length is not really unknown. Phone main cameras are 24 to 28 mm equivalent, so it is assumed, and the proportions then follow from the outline alone: 1.412 for that letter, 0.708 for an A4 sheet lying sideways (0.707), and within 2% at a 25° tilt for a lens at either end of that range. The output is sized so that neither direction loses detail.
-
-7. **Enhance.** A flattened photo is geometrically right and still reads as soft, for reasons that have nothing to do with pixel count: the paper is grey-beige and unevenly lit, and the camera's own smoothing never lets a thin stroke reach black (on one real scan the ink measured 0.55 against paper at 0.86). So the page is cleaned up the way dedicated scanners do it: the bare paper's colour is estimated everywhere and divided out, which removes shading and colour cast together and makes the paper white; brightness is sharpened and its levels set so ink goes to black; and colour is *smoothed* rather than sharpened, which averages the camera's colour noise off the letters while a pen stroke keeps its blue. The ink level is judged from the grey print itself, not from the darkest pixels, so a logo or stamp with true blacks does not leave the text beside it grey. Large dark or coloured areas are recognised as not-paper and left even. **The page decides whether this applies.** All of it assumes a sheet that is mostly one paper colour with ink on it, and on a photograph every step is damage: the same magazine cover came out posterised and smeared. So the flattened page is first measured for how much of it is bare paper, meaning bright and of the one colour most of the bright part shares, whatever that colour is (white, cream, a pastel sheet, any of them under warm light), as long as it is a colour paper can have. Real letters and forms measure 0.93 to 1.00 and that cover 0.14; below a half, the page is left exactly as shot and the scanner says so. Bright and even is not enough on its own: reported from a real scan, a lime-green bank card measured as paper, so its green was divided out to white, leaving green halos round the chip and logo and a pink chip. Lighting moves white paper's colour along the warm to cool line, and paper stocks are pale, so a strong colour, or a green or magenta tint that no ordinary light gives paper, now counts as a coloured object and is left as shot. On a white page, a large bright coloured area (a green logo, a band of highlighter) is likewise kept in its colour instead of being bleached to white with a coloured rim. **Enhance: on/off** overrides the decision either way for the page in front of you, and is forgotten with the next photo, because it is a judgement about one page, not a setting.
-
-8. **Clean edges.** The outline is fitted to the middle of the paper's slightly blurred edge, so cutting exactly on it keeps half of that edge and a sliver of desk: measured on a real scan, a dark rim three to four pixels thick on every side. The page is therefore cut 0.4% of its shorter side inside the outline, by moving each side parallel to itself so that the same few pixels come off every edge however tilted. A uniform trim cannot remove a *wedge*, though, which is what a straight outline leaves against a slightly curled edge or a plastic sleeve showing just beyond it (the same scan was still 10% dark ten pixels in on one side), and trimming far enough to do so would cost real margin on every scan. So what remains is whitened instead, under a deliberately narrow rule: working inward from the very edge of the scan, only while pixels are darker than paper, and only within a band of 1.2%. Print, which sits inside the margins, is never reached; content that really runs to the edge loses at most the band's depth; and a side that is dark right through the band along much of its length is the document's own (a full-bleed photo, a cover) and is left alone. Whitening applies only to enhanced pages, where paper is white.
-
-**Paper is colourless; a table is not.** Brightness can only tell lighter from darker, and a table has an edge of its own. Reported from real scans: a sheet lying near the front of a varnished wooden table came out with a strip of table along the bottom. Table-against-floor is a straighter and stronger step in brightness than paper-against-table, it faces the same way, and it lay within reach of the paper's edge, so the outline settled on it, even starting from a perfect outline. What sets paper apart is that it has no colour. So the page is looked for first in a *paper view* of the photo, brightness less colourfulness, in which wood, skin, cloth and cork go dark however brightly lit, the table's own edge all but vanishes (dark wood against dark floor), and the paper's edge is the only strong step left. Shade takes brightness away without adding colour, so a shadow across the page does not become an edge. Plain brightness remains the second opinion, for scenes where colour says nothing (grey carpet, marble and concrete read the same in both views) or misleads (a pastel sheet on a grey desk is the colourful thing in the picture). Finding the page, tightening Grok's outline and **Snap** all work this way; the print-levelling step still reads plain brightness.
-
-**Covers and photographs: found by their edges alone.** Some pages cannot be told from what they lie on by any one number per pixel. Reported from a real scan: a full-colour magazine cover on a wooden desk, overhanging onto carpet, was no lighter, darker or plainer than its surroundings, so neither view above saw a page at all and the scan came out with desk above it and carpet below. All that still said "page" was four long straight lines meeting at four corners, so that is what the last resort looks for. On a thumbnail, the change in *typical colour* across every horizontal and vertical boundary is measured (medians over long, shallow strips, so print, sequins, grain and carpet pile drop out), the long straight lines in each map are picked out, and the four that make the most convincing sheet are chosen. Convincing meant three things, each of which that scan needed: every side is a step along most of its length; the sheet is as large as it can be, because a page's edge encloses everything printed on it (without this the outline stopped at the headline, a bolder line than the cover's pale bottom edge against pale carpet); and the sides *stop at the corners*, because the desk's front edge ran on behind the cover and out both sides, while only a sheet's own edges start and finish at each other. The outline is then confirmed side by side at working resolution, all four or nothing. Colour steps have no direction, which costs this view the others' best defence against print (a page is lighter, or darker, than its surroundings all the way round): tightening a loose outline this way went to the masthead every time. So near a rough outline the whole-sheet search is asked first, the final fit looks only a short way, and whether the inside of the outline looks like print or like pictures decides which view is believed first. Whether a page is levelled to its print depends on what it *is*, not on how it was found: a newspaper lying half on pale carpet can only be found by its edges, as a cover is, and came out with its print two degrees askew while "found by its edges" was taken to mean "has no print". So the inside of the outline is measured for bare paper (the same test that decides enhancement, below): print on paper is levelled, a cover is not, because rows of sequins have no claim to be level.
-
-   For the same reason the side-by-side fit works differently in colour. In the other views each probe along a side names *the* boundary, the strongest step facing the way the page faces. In colour that went wrong on the very next scan: probes picked the cover's edge along the lower half of a side and print along the upper half, the line through both came out turned by a degree and a half, left a wedge of desk in the scan, and still passed as tight. So in colour no probe chooses. Every sharp boundary at every probe is a candidate, and the side is the straight line that gathers the most robust contrast along its whole length: print is strong but local, a soft shadow beside the page runs the whole length but is weak, texture is sharp everywhere but has no contrast between the typical colours either side. Only the sheet's own edge is all three.
-
-"Where the paper begins" is judged by comparing the **median** brightness of a region just inside a candidate position with one just outside it. That choice was earned the hard way. Looking for the sharpest local step drifted onto carpet speckle. Comparing region *means* survived texture but cropped a scan to its block of text on white marble, because print drags a mean down. A median ignores anything covering less than half of a region, which is true of print, plank seams, marble veins and carpet pile alike. The median identifies the right boundary; a sharp local measure then pinpoints it; and the line is refitted after dropping points that disagree, so a finger on the page or a dog-eared corner does not tilt the edge it interrupts.
-
-Tested on synthetic dark wood, pale wood, white marble, dark granite, concrete and carpet, in even light and lit from one side, each with its most misleading feature (seams, grain, veins, speckle, contact shadow). All land within 0.3% of the frame. A colour scene of a sheet 1.2% to 3.5% from the front edge of an orange wooden table, with dark floor beyond, lands within 0.3% too, where brightness alone puts the bottom side on the table's edge every time. A busy full-colour cover overhanging a desk onto carpet, invisible to both of the other views, is found by its edges to within 0.6%.
-
-**You see the aligned page, not just an outline.** When the page is found automatically the scanner goes straight to the result: the page cut out, straightened and enhanced, with pinch to zoom so you can check the small print. **Adjust corners** goes back to the outline editor, where **Align** produces the result again. Earlier versions only ever showed the original tilted photo with an outline drawn on it and did the straightening invisibly at the moment of sharing, which looked exactly as if the borders were found and then never aligned.
-
-Once the page is aligned there are two places it can go. **To prompt** attaches a copy capped at 2048 px (ample for Grok to read small print, and a sensible upload) to your message. **Share** sends the full-detail straightened JPEG through Android's share sheet to any app that accepts an image, such as Signal, Telegram or your email app (the file name becomes the email subject). **Save** puts the full-detail page in your phone's gallery, in Pictures/Pocket Martian (Android 10 and later; tapping it twice doesn't make a copy). Save and Share leave the scanner open, so one scan can be kept, sent to another app and put into the prompt without scanning twice.
-
-In the outline editor you can drag any corner, tap **Snap** to pull the current corners onto the nearest paper edges, or **Ask Grok**. **Rotate left** and **Rotate right** are available in both views and turn the photo a quarter turn: a phone held flat over a page cannot tell portrait from landscape, so captures often arrive sideways.
-
-Privacy and cost: most scans never leave the phone until you send them. Only when Grok is asked does one reduced photo go to xAI, billed like any small image prompt.
-
-## Network resilience
-
-“Can't reach api.x.ai” on Android is almost always DNS or a dead route, not xAI being down. The app now handles the common cases itself:
-
-| Failure | What the app does |
-| --- | --- |
-| System DNS returns nothing (carrier/hotel Wi-Fi resolver, Private DNS misconfigured, VPN hijacking port 53) | Retries the lookup over **DNS-over-HTTPS** (Cloudflare `1.1.1.1`, then Google `8.8.8.8`, bootstrapped by IP so they work without port-53 DNS). If both fail, reuses the last address set that worked in this session |
-| IPv6 route advertised but blackholed (common on mobile data) | Resolved addresses are ordered **IPv4 first**; connect timeout is 12 s instead of 60 s so a dead address is skipped quickly |
-| Connect/TLS reset, HTTP/2 stream reset before any data, `408/429/5xx/529` | Up to **3 attempts** with 0.5 s → 1.5 s back-off (honours `Retry-After` up to 10 s). A reply that already started streaming is never retried, so nothing is double-billed |
-| No active network | Fails immediately with “No internet connection” — no 60 s hang |
-| Model id rejected | Falls back to Grok 4.6 (unchanged) |
-
-Turn on **Debug mode** in Settings to see each retry (`RETRY 2/3 in 500ms …`) and the reason in the log screen.
-
-If it still fails: toggle Wi-Fi ↔ mobile data, check **Settings → Network → Private DNS** on the phone, or disable any VPN/ad-blocker that filters DNS.
-
-## UK train times (Realtime Trains)
-
-Web search is a poor source of live train times: departure boards are pages built by script, which search results rarely contain, so answers fell back on timetables and guesses. [Realtime Trains](https://www.realtimetrains.co.uk) publishes Network Rail's live running data through an API. With your own token, Grok asks it for exactly the board it needs.
-
-### Set it up
-
-1. Create a token at **[api-portal.rtt.io](https://api-portal.rtt.io)**. Either kind works: a long-life access token is used as it is; a refresh token is exchanged for a short-life access token automatically.
-2. In the app: **Settings → Chat → UK train times**, paste the token and tap **Save**. Saving also checks it with Realtime Trains and says whether it was accepted. **Check** tests it again later; **Clear** removes it.
-3. Ask about trains as you normally would: "next train from St Albans to St Pancras", "is the 17:40 to Sevenoaks running late?", "when does it get in?".
-
-Without a token, nothing changes: train questions are answered from web search as described under [UK transit web sources](#uk-transit-web-sources).
-
-### How it works
-
-The app gives Grok two tools of its own, offered only when a token is saved:
-
-| Tool | Realtime Trains endpoint | What Grok gets |
-| --- | --- | --- |
-| `uk_train_departures` | `GET https://data.rtt.io/gb-nr/location` | Departures from a station (CRS code, e.g. `SAC`), optionally only trains calling at or coming from another station, from a given time for up to 12 hours: scheduled and expected times, platform, status (on time, late *n* min, cancelled, departed), destination, operator, delay and cancellation reasons, and an id per train |
-| `uk_train_service` | `GET https://data.rtt.io/gb-nr/service` | Every stop of one train (by that id) with scheduled and expected arrival and departure times and platforms, which is how arrival times are answered |
-
-When Grok calls one, the chat shows **Checking live train times…**, the app makes the request with your token, and the result goes back to Grok as a short JSON summary in UK local time. Grok then answers from it and names Realtime Trains as the source. Up to four rounds of lookups are allowed per answer. Each one appears in the request timing line under **Settings → App → Logs**, for example `2 train lookups 640ms`.
-
-### Your token stays yours
-
-- **You enter your own token.** The app contains none, and none is in this repository or in any published APK.
-- **It is stored only on your phone**, in the app's private settings, which are excluded from cloud backup and device transfer.
-- **It is sent only to `https://data.rtt.io`**, as a bearer token over HTTPS. It is never sent to xAI or included in anything shared.
-
-Realtime Trains' API terms say: *"It is a requirement that no token is placed in a distributable user application unless specifically authorised by us. End-user applications are expected to proxy their requests through a server-side application such that token is not available publicly. If we identify a token is in a downstream user application, it will be revoked."* This app distributes no token: each person supplies their own, for their own use, on their own device. Whether that use suits Realtime Trains is between you and them; they say personal users of the API are supported through their community Discord.
-
-The API's base limits are 30 requests a minute, 750 an hour, 9,000 a day and 30,000 a week; a train question typically uses one to three.
-
-## UK transit web sources
-
-When answering rail and transit questions, the app steers `web_search` toward these official sources (implemented in chat instructions). Links are preferred over guessing times or disruptions.
-
-### Why GPS is used
-
-Location is **for journey-style questions that start from “here”**, not for tracking or ads. Typical use:
-
-- *“Find me transport from my current location to King’s Cross”*
-- *“Next trains from nearest station to Brighton”*
-- *“How do I get from here to the airport?”*
-
-With **Use GPS location** enabled (default) and Android location permission granted, the app adds an approximate position to the model instructions. Combined with the sources below, Grok can resolve nearby stations/stops and search live times. Disable the setting (or deny permission) anytime — chat still works; you just name the origin yourself.
-
-**Accuracy notes:** location uses **platform GPS only** for place naming (no Google Play Services). Strategy is **cache with timeout** (not continuous tracking): optional one-shot warm lookup at app open, then reuse for the configured TTL (**Settings → GPS cache timeout**, default **10 minutes**) without touching the GPS chip; after TTL expires the next send does one fresh session and stops again. A town/postcode is reverse-geocoded only from a GPS fix ≤50 m.
-
-### Why live answers use National Rail (and why they sometimes didn’t)
-
-The app does **not** call National Rail’s APIs directly. It uses xAI’s server-side **`web_search`** tool: the model chooses search queries, xAI runs them, and citations come back.
-
-Earlier builds only said “prefer official sites.” That is a soft hint — Grok could still answer from memory, or search random blogs, and never hit **www.nationalrail.co.uk** / **realtime.nationalrail.co.uk**.
-
-Current behaviour for rail/transit enquiries:
-
-1. Detect train/journey-style prompts (e.g. trains, departures, “from here to…”, station names).
-2. **Require** `web_search` before inventing times.
-3. **Require first searches** to use `site:nationalrail.co.uk` / `site:realtime.nationalrail.co.uk` (journey planner / live departures).
-4. Then allow operator sites (Thameslink, TfL, etc.) and cite URLs.
-
-Limitations (inherent to agent web search, not a local bug):
-
-- Live boards are often **JavaScript-heavy**; the tool may get search snippets or planner pages rather than a perfect real-time board scrape.
-- The model still executes the tool on xAI’s side — if search returns weak results, the app will say so and should still link National Rail.
-- Turn on **Debug mode** in Settings to see whether `web_search` ran and which citation URLs came back.
-
-### Hubs
-
-| Source | URL |
-| --- | --- |
-| National Rail | https://www.nationalrail.co.uk |
-| Live departure boards | https://realtime.nationalrail.co.uk |
-| Network Rail (engineering / line status) | https://www.networkrail.co.uk |
-
-### St Albans and nearby (Herts / Midland Main Line OHLE / Abbey Line)
-
-| Operator / service | Covers | URL |
-| --- | --- | --- |
-| **Thameslink** | St Albans City, Luton, Bedford, St Pancras, Blackfriars, through-London Thameslink | https://www.thameslinkrailway.com |
-| **London Northwestern Railway** | St Albans Abbey, Abbey Line ↔ Watford Junction | https://www.londonnorthwesternrailway.co.uk |
-| **Great Northern** | Nearby ECML / Herts (e.g. Welwyn, Hatfield, Hertford, Stevenage) | https://www.greatnorthernrail.com |
-| **East Midlands Railway** | Midland Main Line long-distance past the area | https://www.eastmidlandsrailway.co.uk |
-| **Intalink** | Herts buses / Abbey ↔ City interchange | https://www.intalink.org.uk |
-
-### London
-
-| Source | Covers | URL |
-| --- | --- | --- |
-| Transport for London (TfL) | Tube, Overground, Elizabeth line, DLR, buses, trams, status | https://tfl.gov.uk |
-| Citymapper | Journey planning / status | https://citymapper.com |
-
-### Other major UK operators
-
-| Operator | URL |
-| --- | --- |
-| Greater Anglia | https://www.greateranglia.co.uk |
-| Southeastern | https://www.southeasternrailway.co.uk |
-| Southern | https://www.southernrailway.com |
-| Gatwick Express | https://www.gatwickexpress.com |
-| South Western Railway | https://www.southwesternrailway.com |
-| c2c | https://www.c2c-online.co.uk |
-| Chiltern Railways | https://www.chilternrailways.co.uk |
-| Great Western Railway | https://www.gwr.com |
-| Avanti West Coast | https://www.avantiwestcoast.co.uk |
-| LNER | https://www.lner.co.uk |
-| CrossCountry | https://www.crosscountrytrains.co.uk |
-| TransPennine Express | https://www.tpexpress.co.uk |
-| Northern | https://www.northernrailway.co.uk |
-| West Midlands Railway | https://www.westmidlandsrailway.co.uk |
-| ScotRail | https://www.scotrail.co.uk |
-| Transport for Wales | https://tfw.wales |
-| Hull Trains (open access) | https://www.hulltrains.co.uk |
-| Grand Central (open access) | https://www.grandcentralrail.com |
-| Lumo (open access) | https://www.lumo.co.uk |
-| Caledonian Sleeper | https://www.sleeper.scot |
-
-Non-UK transit uses the best official operator site or general web search.
-
-## Supported Android versions
-
-| | |
-| --- | --- |
-| **Minimum** | Android 7.0 (API **24**) |
-| **Target** | Android 15 (API **35**) |
-| **Compile SDK** | 35 |
-
-Devices and emulators on API 24 and above are supported. Location features need the usual runtime permission (optional; the app works without it).
-
-## Requirements
-
-- Android Studio or Gradle
-- Android SDK 24+ (device or emulator)
-- xAI **API key** with prepaid **API credits** from [console.x.ai](https://console.x.ai/)
-
-### SuperGrok vs API credits (common confusion)
-
-**Pocket Martian is not the official Grok app.** It talks to `https://api.x.ai` with the API key you paste in Settings.
-
-| Product | Where | What it pays for |
-| --- | --- | --- |
-| **SuperGrok / SuperGrok Heavy** | grok.com / X apps | Consumer chat limits on those apps |
-| **xAI API credits** | [console.x.ai → Billing](https://console.x.ai/team/default/billing) | Every request this app makes (text, images, web search, voice, etc.) |
-
-A SuperGrok Heavy subscription **does not** fund this app. If you see “out of credits” after attaching photos, top up **API** credits (or enable auto top-up) on the console billing page. Image prompts cost more tokens than text-only ones, so a low balance often fails first when you attach photos.
-
-## Building and Running
-
-### Build the APK
 ```bash
-./build.sh
+./build.sh            # release APK, in private-not-in-git/builds/
+./build.sh --emulate  # debug build, installed and launched on an emulator
 ```
 
-### GitHub and Google Play versions
-There are two versions of the app, `github` (what `./build.sh` makes, with its own update check) and `play` (no update check and no install permission, because Play forbids apps updating themselves). Both are `com.pocketmartian.app` signed with the same key.
+There are two versions of the app:
+- **`github`** is what `build.sh` makes. It includes its own update check.
+- **`play`** has no update check and no permission to install apps, because Google Play
+  forbids apps that update themselves.
 
-### Build and Run in Emulator
-```bash
-./build.sh --emulate
-```
-This will build the debug APK, start the emulator (assumes `Pixel_4_API_34` AVD exists), install and launch the app.
+Both are `com.pocketmartian.app`, signed with the same key. The release key is read from
+`private-not-in-git/secrets/release-key.properties`, which git ignores. Without it,
+release builds are signed with the debug key.
 
-Note: If `./gradlew` is missing, the script falls back to `gradle` command. Run `gradle wrapper` first if needed to generate the wrapper.
-
-## Setup
-1. Open in Android Studio
-2. Sync Gradle
-3. In Settings screen, enter your xAI API key (it will be securely stored)
-4. Select theme
-5. Start chatting!
-
-### Credits & usage (optional)
-
-To show live **API prepaid balance** and rate quotas:
-
-1. In [console.x.ai](https://console.x.ai) → **Settings → Management Keys**, create a management key (separate from the chat API key).
-2. Paste it under **Settings → API credits / Management** (Team ID is optional; the app auto-detects it).
-3. Open **Settings → Billing → Credits & usage** and tap **Refresh**.
-
-**SuperGrok Heavy** utilisation cannot be read programmatically — mark your consumer plan on that screen for reference, and check remaining consumer limits in the official Grok app / [grok.com](https://grok.com).
-
-## Architecture
-Follows the plan in PLAN.md: Hilt DI, Retrofit for API, DataStore for settings, Compose for UI.
+Built with Kotlin, Jetpack Compose, Material 3, Hilt, Retrofit/OkHttp and DataStore,
+targeting Android 16 (API 36), minimum Android 7.0 (API 24). It talks to xAI's Responses
+API (`https://api.x.ai/v1/responses`).
 
 ## License
-MIT - For personal/educational use.
 
-## Notes
-- Package: com.pocketmartian.app
-- API key never logged or exposed
-- Tokyo Night theme uses authentic colors from the popular VSCode theme
+[MIT](LICENSE).

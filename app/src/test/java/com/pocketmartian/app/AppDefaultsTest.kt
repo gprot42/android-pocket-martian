@@ -16,12 +16,12 @@ class AppDefaultsTest {
     }
 
     @Test
-    fun theOfferedModelsAre47And46And45() {
+    fun theOfferedModelsAre47And46() {
         val ids = AppDefaults.CHAT_MODELS.map { it.second }
-        assertEquals(listOf("grok-4.7", "grok-4.6", "grok-4.5"), ids)
+        assertEquals(listOf("grok-4.7", "grok-4.6"), ids)
         assertTrue(AppDefaults.isKnownChatModel("grok-4.7"))
         assertTrue(AppDefaults.isKnownChatModel("grok-4.6"))
-        assertTrue(AppDefaults.isKnownChatModel("grok-4.5"))
+        assertFalse(AppDefaults.isKnownChatModel("grok-4.5"))
         assertFalse(AppDefaults.isKnownChatModel("grok-4.3"))
     }
 
@@ -44,13 +44,14 @@ class AppDefaultsTest {
         assertEquals("grok-4.7", AppDefaults.normalizeChatModel(null))
         assertEquals("grok-4.7", AppDefaults.normalizeChatModel("grok-4.3"))
         assertEquals("grok-4.7", AppDefaults.normalizeChatModel("grok-4"))
+        // 4.5 is no longer offered: anyone who had chosen it moves to the default.
+        assertEquals("grok-4.7", AppDefaults.normalizeChatModel("grok-4.5"))
     }
 
     @Test
     fun aModelAlreadyChosenIsKept() {
         // Upgrading the app must not move anyone off the model they picked.
         assertEquals("grok-4.6", AppDefaults.normalizeChatModel("grok-4.6"))
-        assertEquals("grok-4.5", AppDefaults.normalizeChatModel("grok-4.5"))
         assertEquals("grok-4.7", AppDefaults.normalizeChatModel("grok-4.7"))
     }
 }
