@@ -288,9 +288,14 @@ fun ChatScreen(
 
     // Ask for location once when GPS is on and the user sends (then send either way).
     var locationPermissionAsked by remember { mutableStateOf(false) }
+    // Set while Android's location question is open. The first Send opens it and the
+    // prompt is sent once it is answered; a second tap in the moment before it covered
+    // the screen used to send the prompt there and then as well.
+    var locationPermissionOpen by remember { mutableStateOf(false) }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
+        locationPermissionOpen = false
         viewModel.sendPrompt()
     }
 
@@ -305,11 +310,13 @@ fun ChatScreen(
     }
 
     fun sendWithOptionalLocationPermission() {
+        if (locationPermissionOpen) return
         if (uiState.locationEnabled &&
             !hasLocationPermission() &&
             !locationPermissionAsked
         ) {
             locationPermissionAsked = true
+            locationPermissionOpen = true
             locationPermissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -371,16 +378,18 @@ fun ChatScreen(
         // the glass. A web search makes it worst because those answers are the longest.
         var wasSending = false
         snapshotFlow {
-            // Streamed length is included so the list follows the answer as it grows.
-            Triple(
+            // Streamed length is included so the list follows the answer as it grows, and
+            // the status so that "Searching the web…" appearing under the text is in view.
+            FollowKey(
                 uiState.messages.size,
                 uiState.isSending,
-                uiState.streamingText.length
+                uiState.streamingText.length,
+                uiState.streamingStatus
             )
         }
             .distinctUntilChanged()
-            .filter { (size, isSending, _) -> size > 0 || isSending }
-            .collect { (size, isSending, _) ->
+            .filter { it.size > 0 || it.isSending }
+            .collect { (size, isSending, _, _) ->
                 stickToBottom = followsBottomAfter(stickToBottom, isSending, wasSending)
                 wasSending = isSending
                 if (!stickToBottom) return@collect
@@ -921,11 +930,27 @@ private fun StreamingReply(
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = fontSize.sp),
             color = MaterialTheme.colorScheme.onSurface
         )
+        // Grok often writes a line ("Checking current rates…") and then searches. With
+        // only the text shown, the wait that followed looked like a frozen screen.
+        status?.let {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 6.dp)
+            ) {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                TypingIndicator(showName = false)
+            }
+        }
     }
 }
 
 @Composable
-private fun TypingIndicator() {
+private fun TypingIndicator(showName: Boolean = true) {
     val infiniteTransition = rememberInfiniteTransition(label = "typing")
 
     val alpha1 by infiniteTransition.animateFloat(
@@ -962,12 +987,14 @@ private fun TypingIndicator() {
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Grok",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        if (showName) {
+            Text(
+                text = "Grok",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primary,
@@ -1146,6 +1173,9 @@ private fun MessageItem(
         }
     }
 }
+
+/** What the chat list follows the bottom for: see the scroll-follow effect in ChatScreen. */
+private data class FollowKey(val size: Int, val isSending: Boolean, val streamedLength: Int, val status: String?)
 
 /** Sends, or while a reply is arriving, queues what was typed or stops the reply. */
 @Composable
@@ -1586,6 +1616,9 @@ private fun HtmlContent(
     /** Take a height reading from the page, never more than Compose can lay out. */
     fun acceptHeight(view: WebView, measuredPx: Int) {
         if (measuredPx <= 0) return
+        // Laid out with no width, every word is a line of its own and the reading is
+        // nonsense; the view measures again once it has its width.
+        if (view.width <= 0) return
         if (measuredPx > MAX_ANSWER_HEIGHT_PX) {
             // Recorded so that a recurrence says what produced it; the cause is not known.
             android.util.Log.w(
@@ -1616,6 +1649,12 @@ private fun HtmlContent(
             .nestedScroll(rememberNestedScrollInteropConnection()),
         factory = { context ->
             NonScrollingWebView(context).apply {
+                // An answer that lands while the app is in the background is loaded by a
+                // view that is not drawn, and the page is not laid out until it is: every
+                // reading in the moments after loading was zero, the view stayed one pixel
+                // tall, and the answer was missing from the chat (though whole in History).
+                // So measure again whenever the view is shown or changes width.
+                onMayHaveResized = { measureContentHeight { h -> acceptHeight(this, h) } }
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 settings.javaScriptEnabled = false
                 isNestedScrollingEnabled = true
@@ -1672,6 +1711,12 @@ private fun HtmlContent(
                 lastLoadedHtml[0] = fullHtml
                 webView.loadDataWithBaseURL(null, fullHtml, "text/html", "UTF-8", null)
             }
+        },
+        // Each answer has its own WebView, and one left undestroyed keeps its renderer
+        // memory after it scrolls away or the chat is cleared.
+        onRelease = { webView ->
+            (webView as? NonScrollingWebView)?.onMayHaveResized = null
+            webView.destroy()
         }
     )
     if (cutShort) {
@@ -1683,10 +1728,13 @@ private fun HtmlContent(
     }
 }
 
+/** When to read an answer's height again after it loads or is shown, in milliseconds. */
+private val MEASURE_RETRY_DELAYS_MS = longArrayOf(50, 150, 400, 1_000, 2_500)
+
 /**
  * Measure the laid-out HTML content height in device pixels using
- * [WebView.getContentHeight] (CSS px × density). Retries briefly because
- * contentHeight often lags a frame or two after [WebViewClient.onPageFinished].
+ * [WebView.getContentHeight] (CSS px × density). Retries over a few seconds
+ * ([MEASURE_RETRY_DELAYS_MS]) because contentHeight lags [WebViewClient.onPageFinished].
  */
 private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
     val density = resources.displayMetrics.density
@@ -1700,9 +1748,9 @@ private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
 
     post {
         report()
-        // contentHeight often settles shortly after onPageFinished
-        postDelayed({ report() }, 50)
-        postDelayed({ report() }, 150)
+        // contentHeight settles some frames after onPageFinished, and on a slow or busy
+        // phone not within the first fraction of a second, so keep looking for a while.
+        for (delayMs in MEASURE_RETRY_DELAYS_MS) postDelayed({ report() }, delayMs)
     }
 }
 
@@ -1806,6 +1854,24 @@ private fun LazyListState.isNearBottom(): Boolean {
  * Sources are now native Compose rows, so there is no link hit-test concern.
  */
 private class NonScrollingWebView(context: android.content.Context) : WebView(context) {
+    /** Called when the page's height may have become readable or changed: see HtmlContent. */
+    var onMayHaveResized: (() -> Unit)? = null
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && w != oldw) onMayHaveResized?.invoke()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == android.view.View.VISIBLE) onMayHaveResized?.invoke()
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (isVisible) onMayHaveResized?.invoke()
+    }
+
     override fun scrollTo(x: Int, y: Int) = super.scrollTo(x, 0)
     override fun scrollBy(x: Int, y: Int) = super.scrollBy(x, 0)
     override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) =

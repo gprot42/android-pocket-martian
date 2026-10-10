@@ -136,6 +136,9 @@ class ScanViewModel @Inject constructor(
     /** Quarter turns the user has added on top of the capture's own EXIF rotation. */
     private var userTurn = 0
 
+    /** The turn in progress, if any; see [rotate]. */
+    private var rotateJob: Job? = null
+
     /** Edge-finding views of the current photo, built once and reused by every analysis pass. */
     private var viewsOf: Pair<Bitmap, PageViews>? = null
 
@@ -335,10 +338,14 @@ class ScanViewModel @Inject constructor(
      * often arrives sideways; what is shown here is exactly what will be flattened.
      */
     fun rotate(clockwise: Boolean = true) {
+        // One turn at a time. A double tap turned the same picture twice from the same
+        // starting point while counting two turns, so the screen showed a quarter turn
+        // and the saved page was cut at a half.
+        if (rotateJob?.isActive == true) return
         val state = _uiState.value
         val photo = state.photo ?: return
         if (!state.canConfirm) return
-        viewModelScope.launch {
+        rotateJob = viewModelScope.launch {
             try {
                 val turned = withContext(Dispatchers.Default) {
                     Bitmap.createBitmap(

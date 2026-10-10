@@ -38,6 +38,12 @@ class ResponseHistoryRepository @Inject constructor(
 
     private val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
 
+    /**
+     * Writes happen off the main thread, where they used to run as each answer landed,
+     * and one at a time, so they reach the file in the order they were made.
+     */
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     private fun loadFromDisk(): List<ResponseHistoryEntry> {
         return try {
             if (historyFile.exists()) {
@@ -62,11 +68,11 @@ class ResponseHistoryRepository @Inject constructor(
         )
         val updated = (_entries.value + entry).takeLast(MAX_HISTORY)
         _entries.value = updated
-        saveToDisk(updated)
+        writer.execute { saveToDisk(updated) }
     }
 
     fun clear() {
         _entries.value = emptyList()
-        saveToDisk(emptyList())
+        writer.execute { saveToDisk(emptyList()) }
     }
 }

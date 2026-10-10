@@ -6,7 +6,6 @@ import com.pocketmartian.app.data.model.ModelsListResponse
 import com.pocketmartian.app.data.model.ResponsesRequest
 import com.pocketmartian.app.data.model.ResponsesResponse
 import okhttp3.ResponseBody
-import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
@@ -27,15 +26,18 @@ interface XaiApiService {
     ): ResponsesResponse
 
     /**
-     * Streaming Responses API (SSE). Must be `@Streaming` so OkHttp does not
-     * buffer the whole body — that would recreate the idle-timeout problem.
+     * Streaming Responses API (SSE). Must be `@Streaming` so OkHttp does not buffer the
+     * whole body, which would recreate the idle-timeout problem. A [retrofit2.Call] so it
+     * can be cancelled while its body is being read: cancelling closes the connection
+     * (HTTP/1.1) or resets just this stream (HTTP/2), so the server stops generating, and
+     * billing, the answer.
      */
     @Streaming
     @POST("v1/responses")
-    suspend fun responsesStream(
+    fun responsesStreamCall(
         @Header("Authorization") auth: String,
         @Body request: ResponsesRequest
-    ): Response<ResponseBody>
+    ): retrofit2.Call<ResponseBody>
 
     /** Lightweight auth check — lists models the API key can access. */
     @GET("v1/models")

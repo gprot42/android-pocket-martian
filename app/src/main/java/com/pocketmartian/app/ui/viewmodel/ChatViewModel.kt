@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,10 +32,12 @@ import com.pocketmartian.app.data.share.IncomingShare
 import com.pocketmartian.app.data.share.IncomingShareRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -54,6 +57,9 @@ internal const val SEARCH_STATUS = "Searching the web\u2026"
 
 /** Max images the user can attach to a single prompt (API / payload safety). */
 const val MAX_ATTACHED_IMAGES = 10
+
+/** How long after a send Stop is ignored; see [ChatViewModel.cancelSend]. */
+internal const val STOP_GRACE_MS = 700L
 
 /** Pictures from the last answer sent again with a follow-up, so they can be edited. */
 internal const val MAX_RESENT_IMAGES = 2
@@ -258,6 +264,17 @@ class ChatViewModel @Inject constructor(
 
     /** The in-flight reply, so it can be stopped instead of locking the composer. */
     private var sendJob: Job? = null
+
+    /** When the current reply was asked for (uptime ms), for the Stop grace period. */
+    private var sendStartedAt = 0L
+
+    /**
+     * Which send the screen is showing; 0 when none. Progress and results carry the id of
+     * the send they belong to, and anything from a send that was stopped, or replaced by
+     * New chat, is dropped rather than written over what the screen shows now.
+     */
+    private var activeSendId = 0
+    private var sendCounter = 0
 
     /** Pending write of the conversation to disk; replaced on every change. */
     private var saveJob: Job? = null
@@ -506,9 +523,13 @@ class ChatViewModel @Inject constructor(
             var lastError: String? = null
             for (uri in toAdd) {
                 try {
-                    loaded += AttachedImage(uri = uri, base64 = uriToBase64(uri))
-                } catch (e: Exception) {
-                    lastError = e.message
+                    // Off the main thread: decoding ten camera photos there froze the screen.
+                    loaded += AttachedImage(uri = uri, base64 = withContext(Dispatchers.IO) { uriToBase64(uri) })
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // OutOfMemoryError included: one huge picture must not take the app down.
+                    lastError = e.message ?: e.javaClass.simpleName
                 }
             }
 
@@ -524,8 +545,10 @@ class ChatViewModel @Inject constructor(
                 else -> null
             }
 
+            // Read again: the user may have removed or added pictures while these loaded.
+            val now = _uiState.value.attachedImages
             _uiState.value = _uiState.value.copy(
-                attachedImages = if (loaded.isEmpty()) current else current + loaded,
+                attachedImages = (now + loaded).distinctBy { it.uri }.take(MAX_ATTACHED_IMAGES),
                 errorMessage = errorMessage
             )
         }
@@ -594,14 +617,54 @@ class ChatViewModel @Inject constructor(
         // A reply is still arriving: hold this one instead of refusing it. The composer
         // says "next prompt", so Send has to mean something while waiting.
         if (_uiState.value.isSending) {
+            // A second prompt queued while the first still waits used to replace it
+            // without a word. It is added to it instead, so both are asked.
+            val earlier = _uiState.value.queuedPrompt
+            val queued = if (earlier == null) {
+                QueuedPrompt(text = prompt, images = attachedImages)
+            } else {
+                QueuedPrompt(
+                    text = listOf(earlier.text, prompt).filter { it.isNotBlank() }.joinToString("\n\n"),
+                    images = (earlier.images + attachedImages).distinctBy { it.uri }.take(MAX_ATTACHED_IMAGES)
+                )
+            }
             _uiState.value = _uiState.value.copy(
-                queuedPrompt = QueuedPrompt(text = prompt, images = attachedImages),
+                queuedPrompt = queued,
                 prompt = "",
                 attachedImages = emptyList(),
                 errorMessage = null
             )
             return
         }
+
+        // Show the prompt as sent and empty the composer now, before anything that can
+        // take time (signing in, reading settings). Until this happened inside the
+        // coroutine below, the prompt sat in the composer with Send still live for that
+        // moment, and a second tap sent it again: two bubbles, two paid requests.
+        val previousMessages = _uiState.value.messages
+        val displayText = if (prompt.isNotEmpty()) {
+            prompt
+        } else {
+            imageOnlyPlaceholder(imageBase64List.size)
+        }
+        val optimisticMessages = previousMessages + ChatUiMessage(
+            role = "user",
+            content = displayText,
+            imageUris = attachedImages.map { it.uri }
+        )
+        sendStartedAt = SystemClock.uptimeMillis()
+        val sendId = ++sendCounter
+        activeSendId = sendId
+        _uiState.value = _uiState.value.copy(
+            messages = optimisticMessages,
+            prompt = "",
+            attachedImages = emptyList(),
+            isSending = true,
+            errorMessage = null,
+            lastSentPrompt = prompt,
+            streamingText = "",
+            streamingStatus = "Thinking\u2026"
+        )
 
         sendJob = viewModelScope.launch {
             val timing = SendTiming()
@@ -649,7 +712,18 @@ class ChatViewModel @Inject constructor(
                 is ResolvedAuth.Ok -> auth.bearerToken
                 is ResolvedAuth.Missing -> {
                     locationDeferred.cancel()
-                    _uiState.value = _uiState.value.copy(errorMessage = auth.message)
+                    // Not sent after all: take the bubble back and return the prompt.
+                    val now = _uiState.value
+                    _uiState.value = now.copy(
+                        messages = previousMessages,
+                        prompt = now.prompt.ifBlank { prompt },
+                        attachedImages = now.attachedImages.ifEmpty { attachedImages },
+                        isSending = false,
+                        streamingText = "",
+                        streamingStatus = null,
+                        queuedPrompt = null,
+                        errorMessage = auth.message
+                    )
                     return@launch
                 }
             }
@@ -657,28 +731,6 @@ class ChatViewModel @Inject constructor(
             val debugMode = settingsRepository.debugMode.first()
             val chatModel = settingsRepository.chatModel.first()
             val imagesEnabled = settingsRepository.imagesEnabled.first()
-            val previousMessages = _uiState.value.messages
-            val displayText = if (prompt.isNotEmpty()) {
-                prompt
-            } else {
-                imageOnlyPlaceholder(imageBase64List.size)
-            }
-            val optimisticMessages = previousMessages + ChatUiMessage(
-                role = "user",
-                content = displayText,
-                imageUris = attachedImages.map { it.uri }
-            )
-
-            _uiState.value = _uiState.value.copy(
-                messages = optimisticMessages,
-                prompt = "",
-                attachedImages = emptyList(),
-                isSending = true,
-                errorMessage = null,
-                lastSentPrompt = prompt,
-                streamingText = "",
-                streamingStatus = "Thinking\u2026"
-            )
 
             // Recent turns only, within a character budget (see trimHistory). The turns
             // are chosen on their stored text, then past answers go as plain words: the
@@ -713,8 +765,20 @@ class ChatViewModel @Inject constructor(
             val locationContext = locationDeferred.await()
 
             // Progress arrives on a network thread; StateFlow assignment is safe there.
+            // The screen takes new text at most every STREAM_UI_INTERVAL_MS, and what
+            // arrives in between is shown by a flush once the interval is up. Without that,
+            // the last words before a pause (a web search) stayed hidden until the next
+            // words came, and the reply stopped mid-sentence for as long as the search took.
             val streamed = StringBuilder()
             var lastUiUpdate = 0L
+            var pendingFlush: Job? = null
+            fun showStreamed(status: String?) {
+                val text = synchronized(streamed) {
+                    lastUiUpdate = System.currentTimeMillis()
+                    streamed.toString()
+                }
+                _uiState.value = _uiState.value.copy(streamingText = text, streamingStatus = status)
+            }
 
             val result = chatRepository.sendMessage(
                 apiKey = apiKey,
@@ -728,39 +792,59 @@ class ChatViewModel @Inject constructor(
                 imagesEnabled = imagesEnabled,
                 previousImagesBase64 = previousImages,
                 onProgress = { progress ->
+                    // Progress arrives on a network thread while the main thread also
+                    // changes this state (typing, Stop, New chat). Read-copy-write from both
+                    // could undo each other: a keystroke reverted, a Stop brought back. All
+                    // of it is applied on the main thread, in order.
+                    viewModelScope.launch(Dispatchers.Main.immediate) {
+                    if (activeSendId != sendId) return@launch
                     when (progress) {
                         is ChatProgress.Searching -> {
                             if (_uiState.value.streamingStatus != SEARCH_STATUS) {
-                                _uiState.value = _uiState.value.copy(streamingStatus = SEARCH_STATUS)
+                                pendingFlush?.cancel()
+                                showStreamed(SEARCH_STATUS)
                             }
                         }
                         is ChatProgress.Status -> {
-                            _uiState.value = _uiState.value.copy(streamingStatus = progress.text)
+                            pendingFlush?.cancel()
+                            showStreamed(progress.text)
                         }
                         is ChatProgress.Restarted -> {
-                            streamed.setLength(0)
-                            lastUiUpdate = 0L
+                            pendingFlush?.cancel()
+                            synchronized(streamed) {
+                                streamed.setLength(0)
+                                lastUiUpdate = 0L
+                            }
                             _uiState.value = _uiState.value.copy(
                                 streamingText = "",
                                 streamingStatus = "Retrying\u2026"
                             )
                         }
                         is ChatProgress.Delta -> {
-                            streamed.append(progress.text)
-                            val now = System.currentTimeMillis()
-                            if (now - lastUiUpdate >= STREAM_UI_INTERVAL_MS) {
-                                lastUiUpdate = now
-                                _uiState.value = _uiState.value.copy(
-                                    streamingText = streamed.toString(),
-                                    streamingStatus = null
-                                )
+                            val due = synchronized(streamed) {
+                                streamed.append(progress.text)
+                                System.currentTimeMillis() - lastUiUpdate >= STREAM_UI_INTERVAL_MS
+                            }
+                            if (due) {
+                                pendingFlush?.cancel()
+                                showStreamed(null)
+                            } else if (pendingFlush?.isActive != true) {
+                                pendingFlush = viewModelScope.launch {
+                                    delay(STREAM_UI_INTERVAL_MS)
+                                    if (_uiState.value.isSending && activeSendId == sendId) showStreamed(null)
+                                }
                             }
                         }
+                    }
                     }
                 },
                 timing = timing
             )
+            // Stopped or replaced while waiting: nothing of this send belongs on screen.
+            coroutineContext.ensureActive()
+            if (activeSendId != sendId) return@launch
             timing.mark(SendTiming.Mark.DONE)
+            pendingFlush?.cancel()
             _uiState.value = result.fold(
                 onSuccess = { response ->
                     val costInfo = response.usage?.let { usage ->
@@ -830,6 +914,11 @@ class ChatViewModel @Inject constructor(
      * the composer immediately, instead of waiting out the 30-minute call timeout.
      */
     fun cancelSend() {
+        // Send becomes Stop the moment it is tapped, so the second tap of a double tap
+        // landed on Stop and cancelled the reply just asked for, before it was even sent.
+        // Timed from the send itself: the screen can redraw after that second tap.
+        if (SystemClock.uptimeMillis() - sendStartedAt < STOP_GRACE_MS) return
+        activeSendId = 0
         val job = sendJob
         sendJob = null
         job?.cancel()
@@ -889,7 +978,11 @@ class ChatViewModel @Inject constructor(
      * is now an icon in the top bar, which is easier to hit by accident than the word.
      */
     fun startNewChat() {
-        beforeNewChat = _uiState.value.messages.takeIf { it.isNotEmpty() }
+        // Only a conversation is worth keeping for Undo: a second tap on an empty chat
+        // used to replace it with nothing, and the saved copy was already deleted.
+        _uiState.value.messages.takeIf { it.isNotEmpty() }?.let { beforeNewChat = it }
+        // A prompt queued for the old chat goes back in the composer rather than vanishing.
+        restoreQueuedPromptToComposer()
         clearMessages()
     }
 
@@ -907,6 +1000,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun clearMessages() {
+        activeSendId = 0
         val job = sendJob
         sendJob = null
         job?.cancel()
@@ -940,11 +1034,18 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun uriToBase64(uri: Uri): String {
+        // Read the size first and decode at a fraction of it: a 50 to 200 megapixel photo
+        // decoded whole is hundreds of MB, for a picture that is sent at 1024 px.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_IMAGE_DIMENSION) sample *= 2
+
         val inputStream = context.contentResolver.openInputStream(uri)
             ?: throw IllegalArgumentException("Cannot open image URI")
 
         return inputStream.use { stream ->
-            val originalBitmap = BitmapFactory.decodeStream(stream)
+            val originalBitmap = BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
                 ?: throw IllegalArgumentException("Cannot decode image")
 
             val resizedBitmap = resizeBitmap(originalBitmap)

@@ -106,4 +106,27 @@ class NetworkFailuresTest {
         assertFalse(isTimeoutFailure(UnknownHostException("api.x.ai")))
         assertFalse(isTimeoutFailure(InterruptedIOException("thread interrupted")))
     }
+
+    // --- whether a Responses request may be sent again ------------------------------------
+
+    @Test
+    fun aStreamThatBrokeAfterDataIsNeverRetried() {
+        // A Wi-Fi to mobile handover mid-answer: the request ran and was billed.
+        assertFalse(isRetryableResponsesFailure(StreamBrokeAfterData(SocketException("Connection reset"))))
+        assertFalse(isRetryableResponsesFailure(StreamBrokeAfterData(SocketException("Software caused connection abort"))))
+        assertFalse(isRetryableResponsesFailure(StreamBrokeAfterData(SSLException("Connection reset by peer"))))
+    }
+
+    @Test
+    fun failuresBeforeAnyDataAreRetried() {
+        assertTrue(isRetryableResponsesFailure(ConnectException("Failed to connect to api.x.ai")))
+        assertTrue(isRetryableResponsesFailure(UnknownHostException("api.x.ai")))
+        assertTrue(isRetryableResponsesFailure(EarlyStreamFailure(SocketException("Connection reset"))))
+    }
+
+    @Test
+    fun aReadTimeoutIsNotRetried() {
+        // The model may have been working for minutes; the user decides whether to retry.
+        assertFalse(isRetryableResponsesFailure(SocketTimeoutException("timeout")))
+    }
 }

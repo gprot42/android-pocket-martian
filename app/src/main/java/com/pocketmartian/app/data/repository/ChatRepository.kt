@@ -29,7 +29,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -65,6 +69,15 @@ private const val WARMUP_INTERVAL_MS = 4 * 60 * 1_000L
  */
 internal class EarlyStreamFailure(cause: Throwable) :
     IOException("Stream dropped before any data arrived: ${cause.message}", cause)
+
+/**
+ * The stream broke after data had arrived. Never retried: a connection reset or broken
+ * pipe mid-answer (Wi-Fi handing over to mobile data, say) used to count as "couldn't
+ * connect" and the whole request was sent again, re-running its searches and billing it
+ * a second time, while the text already shown was wiped.
+ */
+internal class StreamBrokeAfterData(cause: Throwable) :
+    IOException("Stream dropped part-way through: ${cause.message}", cause)
 
 /**
  * Live progress while a reply is being produced. The request already streams; without
@@ -508,10 +521,12 @@ class ChatRepository @Inject constructor(
             }
             val response = call.response
             // Written to files at once: the conversation keeps their locations, not megabytes of base64.
-            val imageFiles = madeImages.distinctBy { it.id }.mapNotNull { image ->
-                runCatching { GeneratedImages.save(context, image.id, image.base64) }
-                    .onFailure { Log.w(TAG, "Couldn't save generated image ${image.id}: ${it.message}") }
-                    .getOrNull()
+            val imageFiles = withContext(Dispatchers.IO) {
+                madeImages.distinctBy { it.id }.mapNotNull { image ->
+                    runCatching { GeneratedImages.save(context, image.id, image.base64) }
+                        .onFailure { Log.w(TAG, "Couldn't save generated image ${image.id}: ${it.message}") }
+                        .getOrNull()
+                }
             }
             if (imageFiles.isNotEmpty()) timing?.note("images made", imageFiles.size)
             val baseMessage = response?.let { extractText(it) }.orEmpty()
@@ -574,6 +589,8 @@ class ChatRepository @Inject constructor(
             }
             Result.failure(RuntimeException(friendlyHttpError(e.code(), body, e.message())))
         } catch (e: Exception) {
+            // Stopped: the closed body surfaces here as an IOException, not as cancellation.
+            currentCoroutineContext().ensureActive()
             if (debugMode) {
                 debugLogRepository.logIncoming(
                     summary = when {
@@ -605,7 +622,7 @@ class ChatRepository @Inject constructor(
                     }
                     Result.failure(
                         RuntimeException(
-                            if (isTransientConnectFailure(e)) {
+                            if (isTransientConnectFailure(e) && e.causeChain().none { it is StreamBrokeAfterData }) {
                                 "Couldn't reach api.x.ai ($cause)$how.$vpn"
                             } else {
                                 "Connection to api.x.ai dropped ($cause)$how.$vpn"
@@ -658,8 +675,10 @@ class ChatRepository @Inject constructor(
                 onProgress?.invoke(ChatProgress.Restarted)
                 delay(wait)
             } catch (e: Exception) {
+                // A send that was stopped must not come back as "Retrying…".
+                currentCoroutineContext().ensureActive()
                 val cannotConnect = isTransientConnectFailure(e)
-                val transient = cannotConnect || e is EarlyStreamFailure
+                val transient = isRetryableResponsesFailure(e)
                 val limit = if (cannotConnect) MAX_CONNECT_ATTEMPTS else MAX_RESPONSES_ATTEMPTS
                 if (!transient) throw e
                 // Say how many tries it took, without hiding what the failure was.
@@ -743,22 +762,33 @@ class ChatRepository @Inject constructor(
         timing: SendTiming? = null
     ): ResponsesCallResult = withContext(Dispatchers.IO) {
         timing?.attemptStarted()
-        val http = apiService.responsesStream(
+        val call = apiService.responsesStreamCall(
             auth = "Bearer $apiKey",
             request = request
         )
+        // Reading the SSE stream is a blocking call, which coroutine cancellation alone
+        // cannot interrupt. This used to close the body from a completion handler on this
+        // job, which runs only once the job has finished, and it cannot finish while
+        // blocked in the read: Stop and New chat looked done while the answer kept
+        // streaming, and billing, to the end. The watcher runs on another IO thread and
+        // cancels the call the moment the send is cancelled, which ends the read at once
+        // and tells the server to stop.
+        val finished = AtomicBoolean(false)
+        coroutineScope {
+        val watcher = launch {
+            try {
+                awaitCancellation()
+            } finally {
+                if (!finished.get()) call.cancel()
+            }
+        }
+        try {
+        val http = call.execute()
         timing?.mark(SendTiming.Mark.HEADERS)
         if (!http.isSuccessful) {
             throw HttpException(http)
         }
         val body = http.body() ?: throw IllegalStateException("Empty body from api.x.ai")
-        // Reading the SSE stream is a blocking call, so coroutine cancellation alone
-        // cannot interrupt it: a stopped reply would keep reading until the server
-        // closed. Closing the body from the cancelling thread ends the read at once.
-        val closeOnCancel = coroutineContext[Job]?.invokeOnCompletion { cause ->
-            if (cause != null) runCatching { body.close() }
-        }
-        try {
         body.use { rb ->
             val contentType = rb.contentType()?.toString().orEmpty()
                 .ifBlank { http.headers()["Content-Type"].orEmpty() }
@@ -772,7 +802,7 @@ class ChatRepository @Inject constructor(
                     )
                 }
                 val response = gson.fromJson(json, ResponsesResponse::class.java)
-                return@withContext ResponsesCallResult(
+                return@coroutineScope ResponsesCallResult(
                     response = response,
                     accumulatedText = "",
                     citations = emptyList(),
@@ -805,9 +835,15 @@ class ChatRepository @Inject constructor(
             val parsed = try {
                 ResponsesSseParser(gson, listener).parse(counting)
             } catch (e: IOException) {
+                // Stopped by the user: the watcher closed the body. Not a failure.
+                currentCoroutineContext().ensureActive()
                 if (counting.charsRead == 0L && isStreamInterruption(e)) {
                     throw EarlyStreamFailure(e)
                 }
+                // Part of the answer had already arrived, so the request ran (searches
+                // and all) and is being billed. Sending it again would pay twice and
+                // throw away what was shown; see StreamBrokeAfterData.
+                if (counting.charsRead > 0L) throw StreamBrokeAfterData(e)
                 throw e
             }
             if (parsed.errorMessage != null) {
@@ -826,7 +862,9 @@ class ChatRepository @Inject constructor(
             )
         }
         } finally {
-            closeOnCancel?.dispose()
+            finished.set(true)
+            watcher.cancel()
+        }
         }
     }
 

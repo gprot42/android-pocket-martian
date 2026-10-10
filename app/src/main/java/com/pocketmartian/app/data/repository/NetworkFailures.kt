@@ -146,3 +146,14 @@ internal fun isTimeoutFailure(error: Throwable): Boolean {
 internal fun dnsFailureMessage(host: String): String =
     "Can't reach $host: DNS lookup failed on this network (tried system DNS and " +
         "DNS-over-HTTPS). Toggle Wi-Fi/mobile data, or check Private DNS and VPN settings."
+
+/**
+ * Whether a failed Responses request may be sent again: only when nothing came back, so
+ * that the request certainly did not run. A connection that couldn't be made, or a stream
+ * that dropped before its first byte, qualifies. A stream that broke after data arrived
+ * ([StreamBrokeAfterData]) never does, even though its cause (a reset, a broken pipe)
+ * looks like a connect failure: the request ran and was billed, and sending it again
+ * pays twice.
+ */
+internal fun isRetryableResponsesFailure(error: Throwable): Boolean =
+    error !is StreamBrokeAfterData && (isTransientConnectFailure(error) || error is EarlyStreamFailure)
