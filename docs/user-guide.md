@@ -34,7 +34,8 @@ out first when you attach one.
   while it looks things up.
 - **Stop and queue:** the round button sends. While a reply arrives it stops the reply, or,
   if you've typed something, queues it to send when the reply lands.
-- **Your messages** are bubbles on the right; hold one to copy it. Each answer has copy and
+- **Your messages** are bubbles on the right. Hold one for **Edit**, which puts it back in
+  the prompt box to change and send again, or **Copy**. The × in the prompt box clears it. Each answer has copy and
   share icons. **New chat** clears the conversation and offers **Undo**.
 - **The conversation is saved** on the phone and comes back when the app reopens, even
   after a crash. **New chat** removes the saved copy. The ⋮ menu has **History** of recent

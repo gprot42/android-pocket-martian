@@ -97,6 +97,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -285,6 +288,9 @@ fun ChatScreen(
     // Image opened full screen from a sent message. Hoisted to the screen root so it
     // can be drawn as a layer over everything (see the root Box below).
     var imageToView by remember { mutableStateOf<Uri?>(null) }
+
+    // The prompt box, focused when a prompt is put back in it to edit.
+    val composerFocus = remember { FocusRequester() }
 
     // Ask for location once when GPS is on and the user sends (then send either way).
     var locationPermissionAsked by remember { mutableStateOf(false) }
@@ -670,6 +676,10 @@ fun ChatScreen(
                                     }
                                 },
                                 onOpenImage = { imageToView = it },
+                                onEditPrompt = { text ->
+                                    viewModel.updatePrompt(text)
+                                    composerFocus.requestFocus()
+                                },
                                 onShare = { msg ->
                                     startPlainTextShare(
                                         context,
@@ -746,7 +756,9 @@ fun ChatScreen(
                 TextField(
                     value = uiState.prompt,
                     onValueChange = viewModel::updatePrompt,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(composerFocus),
                     placeholder = {
                         Text(
                             when {
@@ -774,6 +786,14 @@ fun ChatScreen(
                         }
                     },
                     trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Clear the text, without opening the menu. Attached pictures stay:
+                        // each has its own remove button.
+                        if (uiState.prompt.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.updatePrompt("") }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear prompt")
+                            }
+                        }
                         DictationButton(
                             state = uiState.dictation,
                             onStart = {
@@ -785,6 +805,7 @@ fun ChatScreen(
                             },
                             onFinish = viewModel::finishDictation
                         )
+                        }
                     }
                 )
                 SendButton(
@@ -1031,7 +1052,9 @@ private fun MessageItem(
     cachedWebViewHeightPx: Int = 0,
     onWebViewHeight: (Int) -> Unit = {},
     onOpenImage: (Uri) -> Unit = {},
-    onShare: ((ChatUiMessage) -> Unit)? = null
+    onShare: ((ChatUiMessage) -> Unit)? = null,
+    /** Put a prompt back in the prompt box, to change and send again. */
+    onEditPrompt: (String) -> Unit = {}
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -1050,27 +1073,52 @@ private fun MessageItem(
                 } else {
                     message.content
                 }
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
+                // Hold for Edit and Copy. Copying alone left the prompt to be pasted back,
+                // and Android's clipboard preview sits over the prompt box for a few seconds
+                // after a copy, catching the very tap meant to paste.
+                var menuOpen by remember { mutableStateOf(false) }
+                Box(
                     modifier = Modifier
                         .fillMaxWidth(0.85f)
                         .wrapContentWidth(Alignment.End)
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                clipboard.setText(AnnotatedString(message.content))
-                                Toast.makeText(context, "Prompt copied", Toast.LENGTH_SHORT).show()
-                            },
-                            onLongClickLabel = "Copy prompt"
-                        )
                 ) {
-                    Text(
-                        text = display,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = fontSize.sp),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { menuOpen = true },
+                            onLongClickLabel = "Edit or copy prompt"
+                        )
+                    ) {
+                        Text(
+                            text = display,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = fontSize.sp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (!message.isImageOnly) {
+                            DropdownMenuItem(
+                                text = { Text("Edit") },
+                                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onEditPrompt(message.content)
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Copy") },
+                            leadingIcon = { Icon(Icons.Outlined.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                clipboard.setText(AnnotatedString(message.content))
+                                showCopied(context, "Prompt copied")
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1129,7 +1177,7 @@ private fun MessageItem(
                 onClick = {
                     // Strip any HTML tags so the clipboard receives clean plain text
                     clipboard.setText(AnnotatedString(htmlToPlainText(message.content)))
-                    Toast.makeText(context, "Response copied", Toast.LENGTH_SHORT).show()
+                    showCopied(context, "Response copied")
                 },
                 modifier = Modifier.size(40.dp)
             ) {
@@ -1171,6 +1219,16 @@ private fun MessageItem(
                 )
             }
         }
+    }
+}
+
+/**
+ * Say that something was copied, where Android doesn't: from Android 13 the system shows
+ * its own preview of the clipboard, and a second message on top of it is noise.
+ */
+private fun showCopied(context: Context, message: String) {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -1470,7 +1528,7 @@ private fun SourcesList(urls: List<String>) {
                         onClickLabel = "Open $url",
                         onLongClick = {
                             clipboard.setText(AnnotatedString(url))
-                            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                            showCopied(context, "Link copied")
                         },
                         onLongClickLabel = "Copy link"
                     )
@@ -1695,7 +1753,7 @@ private fun HtmlContent(
                     }
                     if (!url.isNullOrBlank()) {
                         copyTextToClipboard(context, url, label = "link")
-                        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                        showCopied(context, "Link copied")
                         true
                     } else {
                         false
