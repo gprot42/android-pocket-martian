@@ -67,8 +67,8 @@ token gives better answers.
 With location on, the app adds your approximate position to the prompt, so "from here"
 works without naming a station.
 - **Satellite position:** it uses the phone's own GPS, not Google Play services.
-- **Reused fix:** a fix is reused for 10 minutes (**Settings → Location**), and only
-  questions that need your position wait for a fresh one.
+- **Only when needed:** the GPS is switched on only when a question needs your position,
+  starting while you type it, and a fix is reused for 10 minutes (**Settings → Location**).
 - **Place names:** a town or postcode is looked up only from a fix accurate to 50 m.
 
 Turn location off any time; you can name where you are instead.

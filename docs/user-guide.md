@@ -70,7 +70,8 @@ when to, as it does with web search.
 
 With **Use GPS location** on (the default) and permission granted, the app adds your
 approximate position to prompts, so you can ask "how do I get from here to King's Cross?"
-without naming a station. It's used only for answers, never for tracking. Turn it off in
+without naming a station. It's used only for answers, never for tracking, and the GPS is
+switched on only when a question needs your position, starting while you type it. Turn it off in
 **Settings → Location**, or deny the permission: chat works the same, you just name where
 you are. See [UK trains and transport](uk-trains.md) for how it's used.
 

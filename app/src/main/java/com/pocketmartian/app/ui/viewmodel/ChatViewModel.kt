@@ -489,11 +489,19 @@ class ChatViewModel @Inject constructor(
     }
 
     fun updatePrompt(prompt: String) {
-        val wasBlank = _uiState.value.prompt.isBlank()
+        val before = _uiState.value.prompt
         _uiState.value = _uiState.value.copy(prompt = prompt, errorMessage = null)
         rememberConversation()
         // User started composing: make sure a warm connection is waiting for them.
-        if (wasBlank && prompt.isNotBlank()) chatRepository.warmUpConnection()
+        if (before.isBlank() && prompt.isNotBlank()) chatRepository.warmUpConnection()
+        // A prompt about where the phone is ("trains from here"): start the GPS now, while
+        // it is being typed, so a fix is likely ready by Send. Once per such draft, not on
+        // every keystroke, and not straight after a failed fix (one is being retried).
+        if (_uiState.value.locationEnabled && wantsFreshLocation(prompt) && !wantsFreshLocation(before) &&
+            !locationRepository.fixRecentlyFailed()
+        ) {
+            locationRepository.startGpsWarmup()
+        }
     }
 
     fun attachImages(uris: List<Uri>) {

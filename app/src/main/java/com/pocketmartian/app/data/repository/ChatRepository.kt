@@ -140,6 +140,15 @@ class ChatRepository @Inject constructor(
      * Fire-and-forget; failures are logged only. Unauthenticated HEAD → quick 401/404,
      * which still leaves the connection in OkHttp's pool.
      */
+    /**
+     * Close pooled connections that aren't in use. Called when the app leaves the screen:
+     * an idle HTTP/2 connection keeps sending its 20 s pings, and each wakes the mobile
+     * radio. Connections carrying a reply are in use and are left alone.
+     */
+    fun releaseIdleConnections() {
+        warmupScope.launch { runCatching { okHttpClient.connectionPool.evictAll() } }
+    }
+
     fun warmUpConnection(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && now - lastWarmupMs.get() < WARMUP_INTERVAL_MS) return

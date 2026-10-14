@@ -9,6 +9,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.dnsoverhttps.DnsOverHttps
 import okhttp3.logging.HttpLoggingInterceptor
@@ -72,6 +73,9 @@ object AppModule {
             // Whole request, including several web_search rounds. xAI's SDK default is 27 min.
             .callTimeout(30, TimeUnit.MINUTES)
             .pingInterval(20, TimeUnit.SECONDS)
+            // Pings run for as long as a connection stays pooled, idle or not, so an idle
+            // one is kept a minute (OkHttp's default is five), not fifteen radio wake-ups.
+            .connectionPool(ConnectionPool(5, 1, TimeUnit.MINUTES))
             .retryOnConnectionFailure(true)
             .build()
     }
