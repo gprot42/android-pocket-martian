@@ -162,6 +162,14 @@ internal class ResponsesSseParser(
                         if (item?.str("type") == "image_generation_call" && type == "response.output_item.added") {
                             listener?.onImageStarted()
                         }
+                        // Each message Grok writes between searches is a paragraph of its own,
+                        // not a continuation of the last sentence.
+                        if (item?.str("type") == "message" && type == "response.output_item.added" &&
+                            text.isNotEmpty() && !text.endsWith("\n\n")
+                        ) {
+                            text.append("\n\n")
+                            listener?.onDelta("\n\n")
+                        }
                         if (item?.str("type") == "web_search_call") {
                             usedWebSearch = true
                             listener?.onSearchStarted()

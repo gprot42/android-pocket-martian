@@ -174,9 +174,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.FilledTonalButton
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import org.commonmark.ext.gfm.tables.TablesExtension
-import org.commonmark.parser.Parser
-import org.commonmark.renderer.html.HtmlRenderer
+import com.pocketmartian.app.data.repository.looksLikeHtml
+import com.pocketmartian.app.data.repository.markdownToHtml
+import com.pocketmartian.app.data.repository.storedAnswerHtml
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -939,7 +939,9 @@ private fun StreamingReply(
         return
     }
 
-    val preview = if (responseFormat == "markdown") text else htmlToPlainText(text)
+    // Only HTML is converted for the preview; Markdown (and plain text) keeps its line breaks,
+    // which turning it into HTML would collapse into one run-on paragraph.
+    val preview = if (responseFormat == "markdown" || !looksLikeHtml(text)) text else htmlToPlainText(text)
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = "Grok",
@@ -1162,7 +1164,8 @@ private fun MessageItem(
             val htmlContent = if (responseFormat == "markdown") {
                 markdownToHtml(message.content)
             } else {
-                message.content
+                // Answers saved before Markdown replies were converted show properly too.
+                storedAnswerHtml(message.content)
             }
             HtmlContent(
                 html = htmlContent,
@@ -1564,14 +1567,6 @@ private fun shareableMessageText(message: ChatUiMessage): String {
     }
 }
 
-/** Convert GFM markdown (including tables) to HTML using commonmark. */
-private fun markdownToHtml(markdown: String): String {
-    val extensions = listOf(TablesExtension.create())
-    val parser = Parser.builder().extensions(extensions).build()
-    val renderer = HtmlRenderer.builder().extensions(extensions).build()
-    return renderer.render(parser.parse(markdown))
-}
-
 @Composable
 private fun HtmlContent(
     html: String,
@@ -1606,6 +1601,7 @@ private fun HtmlContent(
                     -webkit-touch-callout: default;
                 }
                 a { color: ${colorToHex(linkColor)}; }
+                img { max-width: 100%; height: auto; }
                 pre {
                     background: rgba(128,128,128,0.15);
                     padding: 8px;
@@ -1674,6 +1670,17 @@ private fun HtmlContent(
     /** Take a height reading from the page, never more than Compose can lay out. */
     fun acceptHeight(view: WebView, measuredPx: Int) {
         if (measuredPx <= 0) return
+        // Numbers only, never the text: what each reading was and what the view was at the
+        // time, so a blank or vanishing answer on a phone can be traced from its system log.
+        if (measuredPx != measuredHeightPx) {
+            @Suppress("DEPRECATION")
+            android.util.Log.i(
+                "AnswerHeight",
+                "reading $measuredPx px (was $measuredHeightPx) view ${view.width}x${view.height} " +
+                    "content ${view.contentHeight} css px scale ${view.scale} " +
+                    "density ${view.resources.displayMetrics.density} html ${html.length} chars"
+            )
+        }
         // Laid out with no width, every word is a line of its own and the reading is
         // nonsense; the view measures again once it has its width.
         if (view.width <= 0) return
@@ -1739,8 +1746,12 @@ private fun HtmlContent(
                 settings.setSupportZoom(false)
                 settings.builtInZoomControls = false
                 settings.displayZoomControls = false
-                settings.useWideViewPort = true
-                settings.loadWithOverviewMode = true
+                // Drawn at its natural size, never zoomed out to fit something wide: the
+                // height read back from the page assumes that scale, and a zoomed-out page is
+                // shorter on screen than the space kept for it, leaving a blank stretch. Wide
+                // tables scroll sideways inside the answer instead (see the CSS above).
+                settings.useWideViewPort = false
+                settings.loadWithOverviewMode = false
                 isLongClickable = true
                 // Hold a link to copy its URL (tap still opens via shouldOverrideUrlLoading).
                 setOnLongClickListener { view ->

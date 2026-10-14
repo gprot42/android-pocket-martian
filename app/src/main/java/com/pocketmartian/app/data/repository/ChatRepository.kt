@@ -537,7 +537,7 @@ class ChatRepository @Inject constructor(
                 if (response != null) addAll(extractCitations(response))
                 addAll(allCitations)
             }.toList()
-            val assistantMessage = if (responseFormat != "markdown") sanitizeHtml(baseMessage) else baseMessage
+            val assistantMessage = if (responseFormat != "markdown") answerHtml(baseMessage) else baseMessage
             val usedWebSearch = searchedWeb ||
                 response?.output?.any { it.type == "web_search_call" } == true ||
                 citations.isNotEmpty()
@@ -948,15 +948,9 @@ class ChatRepository @Inject constructor(
 
     /** Pull the assistant text out of a Responses API result. */
     private fun extractText(response: ResponsesResponse): String {
-        response.outputText?.takeIf { it.isNotBlank() }?.let { return it }
-        val parts = response.output
-            ?.filter { it.type == null || it.type == "message" }
-            ?.flatMap { it.content.orEmpty() }
-            ?.mapNotNull { part ->
-                if (part.type == null || part.type == "output_text") part.text else null
-            }
-            ?: emptyList()
-        return parts.joinToString("\n").trim()
+        // The messages themselves first, one paragraph each; output_text runs them together.
+        response.output?.let { joinMessageTexts(it) }?.takeIf { it.isNotBlank() }?.let { return it }
+        return response.outputText.orEmpty().trim()
     }
 
     /**
@@ -986,41 +980,6 @@ class ChatRepository @Inject constructor(
         null
     }
 
-    /**
-     * Grok sometimes returns hybrid content (HTML with embedded markdown-style
-     * fragments) even when asked for pure HTML. This pass converts the most common
-     * leakage patterns to their HTML equivalents so the WebView renders them correctly.
-     *
-     *  [[n]](url)  →  <sup><a href="url">[n]</a></sup>   (inline citation numbers)
-     *  [text](url) →  <a href="url">text</a>              (plain markdown links)
-     *  ### Heading  →  <h3>Heading</h3>   (and ## → h2, # → h1)
-     *  **text**    →  <strong>text</strong>
-     *  *text*      →  <em>text</em>
-     */
-    private fun sanitizeHtml(text: String): String {
-        var out = text
-
-        // Inline citation footnotes:  [[1]](https://...)  →  <sup><a href="...">[1]</a></sup>
-        out = out.replace(Regex("""\[\[(\d+)\]\]\(([^)]+)\)""")) { m ->
-            "<sup><a href=\"${m.groupValues[2]}\">[${m.groupValues[1]}]</a></sup>"
-        }
-
-        // Plain markdown links:  [label](url)  →  <a href="url">label</a>
-        out = out.replace(Regex("""\[([^\]]+)\]\((https?://[^)]+)\)""")) { m ->
-            "<a href=\"${m.groupValues[2]}\">${m.groupValues[1]}</a>"
-        }
-
-        // ATX headings (only if they start a line)
-        out = out.replace(Regex("""(?m)^### (.+)$""")) { m -> "<h3>${m.groupValues[1]}</h3>" }
-        out = out.replace(Regex("""(?m)^## (.+)$"""))  { m -> "<h2>${m.groupValues[1]}</h2>" }
-        out = out.replace(Regex("""(?m)^# (.+)$"""))   { m -> "<h1>${m.groupValues[1]}</h1>" }
-
-        // Bold and italic
-        out = out.replace(Regex("""\*\*(.+?)\*\*""")) { m -> "<strong>${m.groupValues[1]}</strong>" }
-        out = out.replace(Regex("""\*(.+?)\*"""))      { m -> "<em>${m.groupValues[1]}</em>" }
-
-        return out
-    }
 }
 
 /** Shown while the app fetches live train times for Grok. */

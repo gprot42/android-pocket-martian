@@ -219,4 +219,21 @@ class ResponsesSseParserTest {
         """.trimIndent()
         assertTrue(parser.parse(StringReader(sse)).images.isEmpty())
     }
+
+    @Test
+    fun eachNewMessageStartsANewParagraph() {
+        val sse = """
+            data: {"type":"response.output_item.added","item":{"type":"message","id":"m1"}}
+
+            data: {"type":"response.output_text.delta","delta":"Checking prices."}
+
+            data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws1"}}
+
+            data: {"type":"response.output_item.added","item":{"type":"message","id":"m2"}}
+
+            data: {"type":"response.output_text.delta","delta":"About €6 a month."}
+
+        """.trimIndent()
+        assertEquals("Checking prices.\n\nAbout €6 a month.", parser.parse(StringReader(sse)).accumulatedText)
+    }
 }
