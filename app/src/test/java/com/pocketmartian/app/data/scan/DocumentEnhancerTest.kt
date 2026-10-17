@@ -183,6 +183,28 @@ class DocumentEnhancerTest {
     }
 
     @Test
+    fun aDarkMutedColourStaysMuted() {
+        // Navy-maroon letters as photographed on a real brochure: dark and muted. Darkened
+        // like ink, they came out a vivid near-black purple.
+        val px = IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            if (x in 60 until 240 && y in 300 until 360) argb(0.33f, 0.25f, 0.29f) else argb(0.78f, 0.76f, 0.74f)
+        }
+        fun saturation(px: IntArray): Float {
+            val cr = mean(px, 330, 120, 180, ::r)
+            val cg = mean(px, 330, 120, 180, ::g)
+            val cb = mean(px, 330, 120, 180, ::b)
+            val top = maxOf(cr, cg, cb)
+            return if (top <= 0f) 0f else (top - minOf(cr, cg, cb)) / top
+        }
+        val before = saturation(px)
+        DocumentEnhancer.enhance(ArrayPixelGrid(w, h, px))
+        val after = saturation(px)
+        assertTrue("saturation $before became $after", after < 0.45f)
+    }
+
+    @Test
     fun resultDoesNotDependOnHowTheWorkIsSplit() {
         // Bands are processed in place, each borrowing a few original rows from its
         // neighbours. Any mistake there shows up as a seam; identical output proves none.

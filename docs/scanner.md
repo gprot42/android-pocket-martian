@@ -64,8 +64,9 @@ image prompt.
    carpet pile. Points that disagree, such as a finger or a folded corner, are dropped.
 4. **Level to the print.** Paper edges can mislead, and printers rarely lay text perfectly
    square. So on print, the slant of the lines of text is measured near the top and bottom
-   of the page, and the outline is turned to match. Photos and drawings are left as the
-   edges had them.
+   of the page, and the outline is turned to match. Only print counts: long lines across
+   the page, such as a design stripe or the edge of a coloured band, are ignored. Photos
+   and drawings are left as the edges had them.
 5. **Flatten from the original photo.** Android's perspective transform maps the page to an
    upright rectangle. It is cut from the photo as stored, at up to 3508 px on the long side
    (A4 at 300 dpi), never enlarged. The page's true proportions are worked out from the
@@ -74,7 +75,9 @@ image prompt.
 6. **Clean up print.** On a page that is mostly paper, the paper's colour is estimated
    everywhere and divided out, which removes shading and colour casts and makes the paper
    white. Brightness is then sharpened and the ink taken to black, and colour is smoothed so
-   pen strokes keep their colour without speckle. A page that is mostly pictures is left as
+   pen strokes keep their colour without speckle. Colourful areas, such as logos, coloured
+   headers and pen, keep their own brightness, and every colour keeps its natural
+   saturation. A page that is mostly pictures is left as
    shot, and so is anything whose main colour paper can't have, such as a coloured card or
    cover. Large coloured areas on a white page, such as logos and highlighter, keep their
    colour.

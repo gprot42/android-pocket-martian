@@ -22,6 +22,15 @@ private const val MIN_SKEW_CONFIDENCE = 0.35f
 /** Slant smaller than this is not worth correcting, and is within measurement noise. */
 private const val NEGLIGIBLE_SKEW = 0.12f
 
+/**
+ * Widest a run of connected edges may be, as a share of the page width, and still count as
+ * print. Letters and words are far narrower; a design stripe, the wavy top of a coloured
+ * band or a long rule runs across much of the page. Reported from a real scan: a brochure
+ * whose diagonal stripe measured 2.25 degrees, with high confidence, on a page whose text
+ * was level, and was "corrected" to tilt every line of it.
+ */
+private const val MAX_PRINT_RUN = 0.15f
+
 /** Working width of the flattened page used for measuring. */
 private const val MEASURE_WIDTH = 700
 
@@ -41,16 +50,25 @@ internal fun estimateTextSkew(image: LumaImage, top: Float, bottom: Float): Skew
     val y1 = min(h - 1, (bottom * h).toInt())
     if (y1 - y0 < 24 || w < 48) return null
 
+    // Strong vertical brightness changes in the band, then only those in runs narrow
+    // enough to be print (see MAX_PRINT_RUN): the rest are lines, not letters.
+    val bandH = y1 - y0
+    val d = image.data
+    val strength = FloatArray(w * bandH)
+    for (y in y0 until y1) {
+        for (x in 0 until w) {
+            val g = abs(d[(y + 1) * w + x] - d[(y - 1) * w + x])
+            if (g >= MIN_LINE_EDGE) strength[(y - y0) * w + x] = g
+        }
+    }
+    val printLike = narrowRuns(strength, w, bandH, (MAX_PRINT_RUN * w).toInt())
+
     // Sparse list of line edges: positions and strengths.
     val xs = ArrayList<Int>()
     val ys = ArrayList<Int>()
     val ws = ArrayList<Float>()
-    val d = image.data
-    for (y in y0 until y1) {
-        for (x in 0 until w) {
-            val g = abs(d[(y + 1) * w + x] - d[(y - 1) * w + x])
-            if (g >= MIN_LINE_EDGE) { xs += x; ys += y; ws += g }
-        }
+    for (i in strength.indices) {
+        if (printLike[i]) { xs += i % w; ys += y0 + i / w; ws += strength[i] }
     }
     if (xs.size < 400) return null // too little print to say anything
 
@@ -85,6 +103,48 @@ internal fun estimateTextSkew(image: LumaImage, top: Float, bottom: Float): Skew
     val typical = coarse.map { it.second }.sorted()[coarse.size / 2]
     val confidence = if (typical <= 0.0) 0f else (best.second / typical - 1.0).toFloat()
     return SkewEstimate(best.first, confidence)
+}
+
+/**
+ * Which edge pixels belong to connected runs at most [maxWidth] wide (8-connected), for
+ * telling letters and words from lines that cross the page.
+ */
+private fun narrowRuns(strength: FloatArray, w: Int, h: Int, maxWidth: Int): BooleanArray {
+    val keep = BooleanArray(strength.size)
+    val label = IntArray(strength.size) { -1 }
+    val stack = IntArray(strength.size)
+    val members = ArrayList<Int>()
+    var next = 0
+    for (start in strength.indices) {
+        if (strength[start] <= 0f || label[start] >= 0) continue
+        members.clear()
+        var top = 0
+        stack[top++] = start
+        label[start] = next
+        var minX = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        while (top > 0) {
+            val i = stack[--top]
+            members += i
+            val x = i % w
+            val y = i / w
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            for (dy in -1..1) for (dx in -1..1) {
+                val nx = x + dx
+                val ny = y + dy
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
+                val j = ny * w + nx
+                if (strength[j] > 0f && label[j] < 0) {
+                    label[j] = next
+                    stack[top++] = j
+                }
+            }
+        }
+        if (maxX - minX + 1 <= maxWidth) for (i in members) keep[i] = true
+        next++
+    }
+    return keep
 }
 
 /** A point inside (or just outside) a quad, by bilinear blend of its corners. */

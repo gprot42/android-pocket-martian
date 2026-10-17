@@ -46,8 +46,10 @@ class RealPhotoHarnessTest {
             (0xFF shl 24) or ((bytes[o].toInt() and 0xFF) shl 16) or
                 ((bytes[o + 1].toInt() and 0xFF) shl 8) or (bytes[o + 2].toInt() and 0xFF)
         }
+        val grid = ArrayPixelGrid(w, h, px)
+        println("HARNESS paper share ${paperShare(grid)}, looks like print ${looksLikePrint(grid)}")
         val started = System.nanoTime()
-        DocumentEnhancer.enhance(ArrayPixelGrid(w, h, px), bands = 4) { jobs ->
+        DocumentEnhancer.enhance(grid, bands = 4) { jobs ->
             jobs.map { Thread(it).apply { start() } }.forEach { it.join() }
         }
         println("HARNESS enhanced ${w}x$h in ${(System.nanoTime() - started) / 1_000_000} ms")
@@ -73,6 +75,23 @@ class RealPhotoHarnessTest {
             val a = 0.05f + k * 0.15f
             println("HARNESS band %.2f-%.2f ${estimateTextSkew(image, a, a + 0.15f)}".format(a, a + 0.15f))
         }
+    }
+
+    /**
+     * Opt-in: level an outline you know to its print. LEVEL_FIXTURE is a colour fixture
+     * (.rgb), LEVEL_CORNERS eight numbers "tlx tly trx try brx bry blx bly" (fractions).
+     */
+    @Test
+    fun levelAKnownOutline() {
+        val path = System.getenv("LEVEL_FIXTURE")
+        val numbers = System.getenv("LEVEL_CORNERS")?.trim()?.split(Regex("[ ,]+"))?.map { it.toFloat() }
+        assumeTrue("LEVEL_FIXTURE / LEVEL_CORNERS not set", !path.isNullOrBlank() && numbers?.size == 8)
+        val n = numbers!!
+        val c = DocumentCorners(NormPoint(n[0], n[1]), NormPoint(n[2], n[3]), NormPoint(n[4], n[5]), NormPoint(n[6], n[7]))
+        val views = loadColour(path!!)
+        show("given", c)
+        println("HARNESS holds print: ${holdsPrint(views.colour, c)}")
+        show("levelled to its print", straightenByText(views.luma, c))
     }
 
     @Test

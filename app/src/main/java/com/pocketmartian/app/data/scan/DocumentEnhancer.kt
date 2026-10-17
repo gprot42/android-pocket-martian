@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Rows of ARGB pixels that can be read and written a block at a time. Lets the enhancer
@@ -165,7 +166,17 @@ internal object DocumentEnhancer {
      * their ink is already darker than this.
      */
     private const val MAX_BLACK_POINT = 0.40f
-    private const val CHROMA_GAIN = 1.6f
+    private const val CHROMA_GAIN = 1.25f
+
+    /**
+     * How colourful a pixel is, as the distance of its colour from grey, before it stops
+     * being treated as ink: below COLOUR_FROM it is ink and taken towards black, above
+     * COLOUR_FULL it is colour and keeps its brightness. Soft grey print and camera noise
+     * measure under 0.05, muted navy letters about 0.07, a coloured logo box 0.17, a blue
+     * pen stroke 0.3.
+     */
+    private const val COLOUR_FROM = 0.08f
+    private const val COLOUR_FULL = 0.20f
     private const val CHROMA_BOX_RADIUS = 2
 
     /** Flattened brightness range taken to be print and its edges, not paper and not solid black. */
@@ -317,11 +328,23 @@ internal object DocumentEnhancer {
             for (x in 0 until w) {
                 val i = base + x
                 val sharp = luma[i] + UNSHARP_AMOUNT * (luma[i] - soft[i])
-                val level = ((sharp - black) / span).coerceIn(0f, 1f)
+                // Ink is taken towards black; colour is not ink. A logo, a coloured header
+                // or a pen stroke keeps its own brightness (only the paper's is divided out),
+                // blending from one to the other as a pixel gets more colourful.
+                val inkLevel = ((sharp - black) / span).coerceIn(0f, 1f)
+                val toneLevel = (sharp / WHITE_POINT).coerceIn(0f, 1f)
+                val chroma = sqrt(cr[i] * cr[i] + cb[i] * cb[i])
+                val c = ((chroma - COLOUR_FROM) / (COLOUR_FULL - COLOUR_FROM)).coerceIn(0f, 1f)
+                val level = inkLevel + (toneLevel - inkLevel) * (c * c * (3f - 2f * c))
 
-                // Colour fades to nothing as the pixel approaches white paper.
+                // Colour follows the brightness: a pixel taken darker keeps its saturation,
+                // only stronger by CHROMA_GAIN. Adding colour back at full strength to a
+                // pixel taken nearly black made dark colours garish: on a real brochure,
+                // muted navy letters (saturation 0.22) came out a vivid near-black purple
+                // (0.84). Colour also fades to nothing as the pixel approaches white paper.
+                val follow = if (luma[i] > 0.02f) (level / luma[i]).coerceIn(0f, 1.5f) else 0f
                 val t = ((level - 0.80f) / 0.18f).coerceIn(0f, 1f)
-                val colour = CHROMA_GAIN * (1f - t * t * (3f - 2f * t))
+                val colour = CHROMA_GAIN * follow * (1f - t * t * (3f - 2f * t))
                 val r = level + cr[i] * colour
                 val b = level + cb[i] * colour
                 val g = (level - 0.299f * r - 0.114f * b) / 0.587f
