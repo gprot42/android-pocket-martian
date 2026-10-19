@@ -162,6 +162,7 @@ import com.pocketmartian.app.ui.viewmodel.ChatUiMessage
 import com.pocketmartian.app.ui.viewmodel.ChatViewModel
 import com.pocketmartian.app.ui.viewmodel.MAX_ATTACHED_IMAGES
 import com.pocketmartian.app.ui.viewmodel.QueuedPrompt
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -1670,20 +1671,32 @@ private fun HtmlContent(
     /** Take a height reading from the page, never more than Compose can lay out. */
     fun acceptHeight(view: WebView, measuredPx: Int) {
         if (measuredPx <= 0) return
+        val screenDensity = view.resources.displayMetrics.density
+        @Suppress("DEPRECATION") val scale = view.scale
+        // Laid out with no width, every word is a line of its own and the reading is
+        // nonsense; the view measures again once it has its width. A page laid out like
+        // that is also zoomed out, and keeps the zoom for a moment after the width arrives:
+        // seen on a phone, a 900-character answer read as 34,437 px (content 14,128 css px
+        // at scale 0.61, not 2.44). Taken as the height, it left fifteen screens of blank
+        // under a few lines, and stuck, because a page never reports itself shorter than
+        // its view. So a reading counts only at the screen's own scale.
+        val stale = view.width <= 0 || abs(scale - screenDensity) > screenDensity * 0.01f
+        // The page reports its height in whole CSS pixels, rounded up from its view's, so
+        // each new height read one or two pixels taller than the last, for ever: the
+        // answer crept, and every creep pulled the chat back to the bottom under a finger
+        // scrolling up. A change smaller than one CSS pixel is that rounding, not content.
+        val creep = measuredHeightPx > 0 && abs(measuredPx - measuredHeightPx) <= ceil(screenDensity).toInt() + 1
         // Numbers only, never the text: what each reading was and what the view was at the
         // time, so a blank or vanishing answer on a phone can be traced from its system log.
-        if (measuredPx != measuredHeightPx) {
-            @Suppress("DEPRECATION")
+        if (measuredPx != measuredHeightPx && !creep) {
             android.util.Log.i(
                 "AnswerHeight",
                 "reading $measuredPx px (was $measuredHeightPx) view ${view.width}x${view.height} " +
-                    "content ${view.contentHeight} css px scale ${view.scale} " +
-                    "density ${view.resources.displayMetrics.density} html ${html.length} chars"
+                    "content ${view.contentHeight} css px scale $scale density $screenDensity " +
+                    "html ${html.length} chars${if (stale) " ignored: not laid out at screen scale" else ""}"
             )
         }
-        // Laid out with no width, every word is a line of its own and the reading is
-        // nonsense; the view measures again once it has its width.
-        if (view.width <= 0) return
+        if (stale || creep) return
         if (measuredPx > MAX_ANSWER_HEIGHT_PX) {
             // Recorded so that a recurrence says what produced it; the cause is not known.
             android.util.Log.w(
