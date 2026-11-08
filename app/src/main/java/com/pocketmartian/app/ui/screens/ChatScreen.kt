@@ -289,6 +289,8 @@ fun ChatScreen(
     // Image opened full screen from a sent message. Hoisted to the screen root so it
     // can be drawn as a layer over everything (see the root Box below).
     var imageToView by remember { mutableStateOf<Uri?>(null) }
+    /** The places map open full screen, and which place to show first. */
+    var placesToView by remember { mutableStateOf<PlacesMapRequest?>(null) }
 
     // The prompt box, focused when a prompt is put back in it to edit.
     val composerFocus = remember { FocusRequester() }
@@ -677,6 +679,7 @@ fun ChatScreen(
                                     }
                                 },
                                 onOpenImage = { imageToView = it },
+                                onOpenPlaces = { placesToView = it },
                                 onEditPrompt = { text ->
                                     viewModel.updatePrompt(text)
                                     composerFocus.requestFocus()
@@ -821,6 +824,10 @@ fun ChatScreen(
 
     imageToView?.let { uri ->
         ImageViewerOverlay(uri = uri, onDismiss = { imageToView = null })
+    }
+
+    placesToView?.let { request ->
+        PlacesMapOverlay(request = request, onDismiss = { placesToView = null })
     }
 
     photoToScan?.let { photo ->
@@ -1055,6 +1062,7 @@ private fun MessageItem(
     cachedWebViewHeightPx: Int = 0,
     onWebViewHeight: (Int) -> Unit = {},
     onOpenImage: (Uri) -> Unit = {},
+    onOpenPlaces: (PlacesMapRequest) -> Unit = {},
     onShare: ((ChatUiMessage) -> Unit)? = null,
     /** Put a prompt back in the prompt box, to change and send again. */
     onEditPrompt: (String) -> Unit = {}
@@ -1174,6 +1182,9 @@ private fun MessageItem(
                 cachedHeightPx = cachedWebViewHeightPx,
                 onHeightMeasured = onWebViewHeight
             )
+        }
+        message.places?.let { result ->
+            PlacesCard(result = result, mapUri = message.placesMap, onOpenMap = onOpenPlaces)
         }
         SourcesList(urls = message.citations)
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -63,12 +63,20 @@ experimental <strong>SuperGrok sign-in</strong>, you sign in on xAI's own pages
   <li><strong>Realtime Trains</strong> (<code>data.rtt.io</code>): only if you add your own
     Realtime Trains token. The station and train being asked about are sent with your token to
     fetch live UK train times.</li>
+  <li><strong>OpenStreetMap</strong> (<code>nominatim.openstreetmap.org</code> and
+    <code>tile.openstreetmap.org</code>): only when you ask for nearby places, such as "the nearest
+    pharmacy". What you're looking for and where to search from (your location, or a place you
+    named) are sent to OpenStreetMap's search, and the map of the area is fetched from its tile
+    servers, including when you move the full-screen map. For a walking route, where you are and
+    the place are sent to the OpenStreetMap routing service run by FOSSGIS
+    (<code>routing.openstreetmap.de</code>).</li>
   <li><strong>Your phone's geocoding service</strong>: with location on, Android's built-in
     geocoder turns coordinates into a place name. Which company provides it depends on your
     phone; on many phones it is Google.</li>
   <li><strong>Public DNS resolvers</strong> (Google, <code>dns.google</code>, and Cloudflare,
-    <code>cloudflare-dns.com</code>): only if your network can't look up <code>api.x.ai</code>,
-    the app asks them for that address instead. Only the name <code>api.x.ai</code> is sent.</li>
+    <code>cloudflare-dns.com</code>): only if your network can't look up a server the app
+    needs (such as <code>api.x.ai</code> or OpenStreetMap's map server), or takes more than a
+    second and a half to, the app asks them for its address too. Only that server's name is sent.</li>
   <li><strong>GitHub</strong> (<code>api.github.com</code>): the version installed from GitHub,
     not the one from Google Play, checks once a day for a newer release. GitHub sees the app's
     version number and your IP address, as with any web request.</li>

@@ -23,6 +23,10 @@ import com.pocketmartian.app.data.model.ResponsesResponse
 import com.pocketmartian.app.data.model.ReasoningConfig
 import com.pocketmartian.app.data.model.TextContent
 import com.pocketmartian.app.data.model.Usage
+import com.pocketmartian.app.data.places.MapSnapshot
+import com.pocketmartian.app.data.places.PlaceOrigin
+import com.pocketmartian.app.data.places.PlacesRepository
+import com.pocketmartian.app.data.places.PlacesResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -105,7 +109,11 @@ data class ChatResult(
     val usedWebSearch: Boolean = false,
     val citations: List<String> = emptyList(),
     /** Pictures Grok made for this answer, saved in the app's storage (see [GeneratedImages]). */
-    val images: List<java.io.File> = emptyList()
+    val images: List<java.io.File> = emptyList(),
+    /** Places Grok looked up for this answer, shown under it on a map. */
+    val places: PlacesResult? = null,
+    /** The map of [places] as a picture; null when it couldn't be drawn (offline). */
+    val placesMap: java.io.File? = null
 )
 
 /** Result of a lightweight GET /v1/models auth probe. */
@@ -126,6 +134,7 @@ class ChatRepository @Inject constructor(
     private val debugLogRepository: DebugLogRepository,
     private val okHttpClient: OkHttpClient,
     private val trains: RealtimeTrainsRepository,
+    private val places: PlacesRepository,
     @ApplicationContext private val context: Context
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -245,6 +254,8 @@ class ChatRepository @Inject constructor(
         model: String = AppDefaults.DEFAULT_MODEL,
         /** Optional approximate location snippet already formatted for instructions. */
         locationContext: String? = null,
+        /** Where "near me" is, for the find_places tool; null when location is unknown. */
+        placesOrigin: PlaceOrigin? = null,
         /** Let Grok make and edit pictures with Grok Imagine when the prompt calls for it. */
         imagesEnabled: Boolean = true,
         /**
@@ -366,7 +377,7 @@ class ChatRepository @Inject constructor(
                 }
             }
             val imageInstructions = if (imagesEnabled) IMAGE_INSTRUCTIONS else ""
-            val instructions = listOf(formatInstructions, webInstructions, imageInstructions)
+            val instructions = listOf(formatInstructions, webInstructions, PLACES_INSTRUCTIONS, imageInstructions)
                 .filter { it.isNotBlank() }
                 .joinToString(" ")
 
@@ -416,7 +427,8 @@ class ChatRepository @Inject constructor(
                 instructions = instructions,
                 tools = listOf(ResponseTool(type = "web_search")) +
                     (if (imagesEnabled) listOf(ResponseTool(type = "image_generation")) else emptyList()) +
-                    (if (trainsAvailable) TRAIN_TOOLS else emptyList()),
+                    (if (trainsAvailable) TRAIN_TOOLS else emptyList()) +
+                    PLACES_TOOL,
                 // Slightly lower temperature for timetable / factual transit answers
                 temperature = if (transitEnquiry) 0.3 else 0.7,
                 // Thinking time dominates wall clock: the API defaults to "high", which
@@ -506,7 +518,8 @@ class ChatRepository @Inject constructor(
                     )
                 }
             }
-            // Grok asked for live train times: fetch them, hand them back, let it carry on.
+            // Grok asked for live train times or nearby places: fetch them, hand them back,
+            // let it carry on.
             // The request is resent whole with the calls and results appended, because
             // requests are not stored at xAI (store=false) to refer back to.
             val allCitations = LinkedHashSet<String>(call.citations)
@@ -515,11 +528,17 @@ class ChatRepository @Inject constructor(
             val usages = mutableListOf<ResponsesUsage>()
             call.response?.usage?.let { usages += it }
             var rounds = 0
+            // The last places found are the ones the answer talks about.
+            var foundPlaces: PlacesResult? = null
             while (call.functionCalls.isNotEmpty() && rounds < MAX_TOOL_ROUNDS) {
                 rounds++
-                onProgress?.invoke(ChatProgress.Status(TRAINS_STATUS))
+                val status = if (call.functionCalls.any { it.name == PLACES_TOOL_NAME }) PLACES_STATUS else TRAINS_STATUS
+                onProgress?.invoke(ChatProgress.Status(status))
                 val outputs = call.functionCalls.map { fc ->
-                    FunctionCallOutputItem(callId = fc.callId, output = runTool(fc, debugMode, timing))
+                    FunctionCallOutputItem(
+                        callId = fc.callId,
+                        output = runTool(fc, debugMode, timing, placesOrigin) { foundPlaces = it }
+                    )
                 }
                 request = request.copy(input = request.input + call.functionCalls + outputs)
                 call = executeResponses(apiKey, request, debugMode, onProgress, timing)
@@ -538,6 +557,11 @@ class ChatRepository @Inject constructor(
                 }
             }
             if (imageFiles.isNotEmpty()) timing?.note("images made", imageFiles.size)
+            val placesMap = foundPlaces?.let { found ->
+                runCatching { MapSnapshot.render(context, okHttpClient, found) }
+                    .onFailure { Log.w(TAG, "Couldn't draw the places map: ${it.message}") }
+                    .getOrNull()
+            }
             val baseMessage = response?.let { extractText(it) }.orEmpty()
                 .ifBlank { call.accumulatedText }
                 // A picture can be the whole answer.
@@ -581,7 +605,9 @@ class ChatRepository @Inject constructor(
                     model = request.model,
                     usedWebSearch = usedWebSearch,
                     citations = citations,
-                    images = imageFiles
+                    images = imageFiles,
+                    places = foundPlaces,
+                    placesMap = placesMap
                 )
             )
         } catch (e: CancellationException) {
@@ -705,7 +731,13 @@ class ChatRepository @Inject constructor(
     }
 
     /** Run one of the app's own tools for the model and return its result as text. */
-    private suspend fun runTool(call: FunctionCallItem, debugMode: Boolean, timing: SendTiming?): String {
+    private suspend fun runTool(
+        call: FunctionCallItem,
+        debugMode: Boolean,
+        timing: SendTiming?,
+        placesOrigin: PlaceOrigin?,
+        onPlaces: (PlacesResult) -> Unit
+    ): String {
         val args = runCatching { com.google.gson.JsonParser.parseString(call.arguments).asJsonObject }.getOrNull()
         fun arg(name: String) = args?.get(name)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
         val started = System.nanoTime()
@@ -720,10 +752,25 @@ class ChatRepository @Inject constructor(
                 )
             } ?: """{"error":"station is required"}"""
             "uk_train_service" -> arg("id")?.let { trains.service(it) } ?: """{"error":"id is required"}"""
+            PLACES_TOOL_NAME -> {
+                // Look up the map's tile server while the search runs, so drawing the map
+                // after it doesn't start with a lookup (seconds, where the network's own
+                // resolver fails and the app falls back to DNS over HTTPS).
+                warmupScope.launch { runCatching { okHttpClient.dns.lookup(MapSnapshot.TILE_HOST) } }
+                val (output, found) = places.find(
+                    name = arg("name"),
+                    osmTag = arg("osm_tag"),
+                    count = arg("count")?.toDoubleOrNull()?.toInt() ?: DEFAULT_PLACES,
+                    near = arg("near"),
+                    userOrigin = placesOrigin
+                )
+                found?.let(onPlaces)
+                output
+            }
             else -> """{"error":"unknown tool ${call.name}"}"""
         }
         val ms = (System.nanoTime() - started) / 1_000_000
-        timing?.trainLookup(ms)
+        if (call.name == PLACES_TOOL_NAME) timing?.note("places lookup", "$ms ms") else timing?.trainLookup(ms)
         if (debugMode) {
             debugLogRepository.logOutgoing(summary = "TOOL ${call.name} (${ms}ms)", body = call.arguments)
             debugLogRepository.logIncoming(summary = "TOOL ${call.name} result", body = result.take(4000))
@@ -994,6 +1041,9 @@ class ChatRepository @Inject constructor(
 /** Shown while the app fetches live train times for Grok. */
 internal const val TRAINS_STATUS = "Checking live train times\u2026"
 
+/** Shown while nearby places are looked up in OpenStreetMap. */
+internal const val PLACES_STATUS = "Finding places nearby\u2026"
+
 /** Shown while Grok Imagine is drawing; a picture takes several seconds. */
 internal const val IMAGE_STATUS = "Creating an image\u2026"
 
@@ -1059,6 +1109,38 @@ internal val TRAIN_TOOLS = listOf(
                 "id":{"type":"string","description":"The id of a train from uk_train_departures"}
             },"required":["id"]}"""
         )
+    )
+)
+
+internal const val PLACES_TOOL_NAME = "find_places"
+private const val DEFAULT_PLACES = 3
+
+/**
+ * Why a tool rather than web search: asked for "3 local 7-11 stores", search gives
+ * addresses half remembered and distances guessed. The tool finds the real ones in
+ * OpenStreetMap, and the user sees them on a map under the answer.
+ */
+internal const val PLACES_INSTRUCTIONS =
+    "NEARBY PLACES: when the user asks for the nearest or local shops, chains, cafes, pharmacies, " +
+        "cash machines, petrol stations or similar places, call find_places instead of searching the " +
+        "web. Pass the chain's usual name (e.g. 7-Eleven for 7-11, McDonald's) as name, or an " +
+        "OpenStreetMap tag such as amenity=pharmacy as osm_tag for a kind of place, and count when " +
+        "the user says how many. Pass near only when the user names somewhere other than where they are."
+
+/** The places tool, always offered: it needs no key, only somewhere to search from. */
+internal val PLACES_TOOL = ResponseTool(
+    type = "function",
+    name = PLACES_TOOL_NAME,
+    description = "The nearest shops or amenities from OpenStreetMap, with address, straight-line " +
+        "distance and opening hours, to the user's current location or to a place they name. The " +
+        "user is shown them on a map with numbered pins.",
+    parameters = schema(
+        """{"type":"object","properties":{
+            "name":{"type":"string","description":"Name or brand to match, e.g. 7-Eleven, Tesco Express, Starbucks"},
+            "osm_tag":{"type":"string","description":"An OpenStreetMap tag for a kind of place, e.g. amenity=pharmacy, amenity=atm, shop=supermarket, amenity=fuel"},
+            "count":{"type":"integer","description":"How many, 1 to 10. Default 3."},
+            "near":{"type":"string","description":"A place to search near instead of the user's location, e.g. Leicester Square, London"}
+        }}"""
     )
 )
 

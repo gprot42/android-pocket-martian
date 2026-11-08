@@ -19,6 +19,10 @@ data class StoredMessage(
     val model: String? = null,
     val usedWebSearch: Boolean = false,
     val citations: List<String> = emptyList(),
+    /** Places shown on a map under the answer; see [com.pocketmartian.app.data.places.PlacesResult]. */
+    val places: com.pocketmartian.app.data.places.PlacesResult? = null,
+    /** Where the picture of that map is, as a file URI. */
+    val placesMap: String? = null,
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,

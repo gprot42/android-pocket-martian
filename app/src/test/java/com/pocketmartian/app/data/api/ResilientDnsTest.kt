@@ -72,6 +72,73 @@ class ResilientDnsTest {
         }
     }
 
+    /** Answers after [delayMs], as a slow or hanging resolver does. */
+    private fun slow(delayMs: Long, result: () -> List<InetAddress>) = FixedDns {
+        Thread.sleep(delayMs)
+        result()
+    }
+
+    @Test
+    fun aSlowSystemResolverOnlyCostsItsHeadStart() {
+        // The phone's resolver hangs and the first fallback times out, as on the reporting
+        // phone, where one map tile waited 22 s for this chain tried one after another.
+        val system = slow(8_000) { throw UnknownHostException("timed out") }
+        val deadDoh = slow(8_000) { throw UnknownHostException("timed out") }
+        val workingDoh = slow(200) { listOf(v4) }
+        val dns = ResilientDns(fallbacks = listOf(deadDoh, workingDoh), system = system, headStartMs = 300)
+
+        val started = System.currentTimeMillis()
+        assertEquals(listOf(v4), dns.lookup("tile.openstreetmap.org"))
+        val took = System.currentTimeMillis() - started
+        assertTrue("took $took ms", took < 1_500)
+    }
+
+    @Test
+    fun aHostTheSystemCouldNotResolveReusesTheFallbackAnswer() {
+        val system = failing()
+        val doh = FixedDns { listOf(v4) }
+        var now = 0L
+        val dns = ResilientDns(fallbacks = listOf(doh), system = system, fallbackReuseMs = 60_000, clock = { now })
+
+        dns.lookup("tile.openstreetmap.org")
+        now += 30_000
+        dns.lookup("tile.openstreetmap.org")
+        assertEquals(1, system.calls)
+        assertEquals(1, doh.calls)
+
+        // After a while the system resolver gets another chance.
+        now += 60_000
+        dns.lookup("tile.openstreetmap.org")
+        assertEquals(2, system.calls)
+    }
+
+    @Test
+    fun lookupsOfOneHostAtOnceShareOneResolution() {
+        val system = slow(300) { listOf(v4) }
+        val dns = ResilientDns(fallbacks = emptyList(), system = system)
+        val threads = (1..6).map { Thread { dns.lookup("tile.openstreetmap.org") } }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+        assertEquals(1, system.calls)
+    }
+
+    @Test
+    fun aHungResolverCannotHoldALookupPastTheDeadline() {
+        val dns = ResilientDns(
+            fallbacks = listOf(slow(5_000) { listOf(v4) }),
+            system = slow(5_000) { listOf(v4) },
+            headStartMs = 100,
+            deadlineMs = 500
+        )
+        val started = System.currentTimeMillis()
+        try {
+            dns.lookup("api.x.ai")
+            fail("expected UnknownHostException")
+        } catch (_: UnknownHostException) {
+        }
+        assertTrue(System.currentTimeMillis() - started < 1_500)
+    }
+
     @Test
     fun preferIpv4IsStable() {
         val v4b = InetAddress.getByAddress("api.x.ai", byteArrayOf(104, 18, 0, 2))

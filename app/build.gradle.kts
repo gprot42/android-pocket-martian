@@ -20,8 +20,8 @@ android {
         applicationId = "com.pocketmartian.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 49
-        versionName = "0.0.49"
+        versionCode = 50
+        versionName = "0.0.50"
 
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'", Locale.US)
             .apply { timeZone = TimeZone.getTimeZone("UTC") }
@@ -156,6 +156,9 @@ dependencies {
 
     // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Live map for places Grok finds: OpenStreetMap tiles, no Google Play services or key
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // CommonMark for Markdown → HTML conversion (GFM tables support)
     implementation("org.commonmark:commonmark:0.23.0")

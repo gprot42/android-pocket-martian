@@ -20,6 +20,9 @@ import com.pocketmartian.app.data.repository.GeneratedImages
 import com.pocketmartian.app.data.repository.ResolvedAuth
 import com.pocketmartian.app.data.local.ChatTranscriptStore
 import com.pocketmartian.app.data.local.StoredMessage
+import com.pocketmartian.app.data.places.MapSnapshot
+import com.pocketmartian.app.data.places.PlaceOrigin
+import com.pocketmartian.app.data.places.PlacesResult
 import com.pocketmartian.app.data.repository.RequestTimingLog
 import com.pocketmartian.app.data.repository.ResponseHistoryRepository
 import com.pocketmartian.app.data.repository.SendTiming
@@ -147,6 +150,8 @@ internal fun ChatUiMessage.toStored(): StoredMessage = StoredMessage(
     model = model,
     usedWebSearch = usedWebSearch,
     citations = citations,
+    places = places,
+    placesMap = placesMap?.toString(),
     promptTokens = costInfo?.promptTokens,
     completionTokens = costInfo?.completionTokens,
     totalTokens = costInfo?.totalTokens,
@@ -162,6 +167,9 @@ internal fun StoredMessage.toUiMessage(): ChatUiMessage = ChatUiMessage(
     model = model,
     usedWebSearch = usedWebSearch,
     citations = citations,
+    // Saved before places existed, Gson leaves these null, which is what they should be.
+    places = runCatching { places?.takeIf { it.places.isNotEmpty() && it.origin != null } }.getOrNull(),
+    placesMap = placesMap?.let { runCatching { Uri.parse(it) }.getOrNull() },
     costInfo = if (promptTokens != null && completionTokens != null && totalTokens != null &&
         estimatedCostUsd != null
     ) {
@@ -191,7 +199,11 @@ data class ChatUiMessage(
     val imageUris: List<Uri> = emptyList(),
     val model: String? = null,
     val usedWebSearch: Boolean = false,
-    val citations: List<String> = emptyList()
+    val citations: List<String> = emptyList(),
+    /** Places Grok looked up for this answer, shown under it on a map. */
+    val places: PlacesResult? = null,
+    /** The picture of that map, when it could be drawn. */
+    val placesMap: Uri? = null
 ) {
     val imageCount: Int get() = imageUris.size
     val hasImage: Boolean get() = imageCount > 0
@@ -309,6 +321,12 @@ class ChatViewModel @Inject constructor(
                     GeneratedImages.purgeUnreferenced(
                         context,
                         keep = saved.messages.flatMap { it.imageUris }
+                            .mapNotNull { runCatching { Uri.parse(it).path }.getOrNull() }
+                            .toSet()
+                    )
+                    MapSnapshot.purgeUnreferenced(
+                        context,
+                        keep = saved.messages.mapNotNull { it.placesMap }
                             .mapNotNull { runCatching { Uri.parse(it).path }.getOrNull() }
                             .toSet()
                     )
@@ -696,7 +714,6 @@ class ChatViewModel @Inject constructor(
                                 waitTimeoutMs = SEND_LOCATION_WAIT_MS,
                                 allowFreshFix = freshLocation
                             )
-                            ?.toInstructionSnippet()
                     }.getOrNull()
                 } else {
                     null
@@ -770,7 +787,7 @@ class ChatViewModel @Inject constructor(
                 emptyList()
             }
 
-            val locationContext = locationDeferred.await()
+            val location = locationDeferred.await()
 
             // Progress arrives on a network thread; StateFlow assignment is safe there.
             // The screen takes new text at most every STREAM_UI_INTERVAL_MS, and what
@@ -796,7 +813,8 @@ class ChatViewModel @Inject constructor(
                 debugMode = debugMode,
                 responseFormat = _uiState.value.responseFormat,
                 model = chatModel,
-                locationContext = locationContext,
+                locationContext = location?.toInstructionSnippet(),
+                placesOrigin = location?.let { PlaceOrigin(it.latitude, it.longitude) },
                 imagesEnabled = imagesEnabled,
                 previousImagesBase64 = previousImages,
                 onProgress = { progress ->
@@ -879,7 +897,9 @@ class ChatViewModel @Inject constructor(
                             model = response.model.ifBlank { null },
                             usedWebSearch = response.usedWebSearch,
                             citations = response.citations,
-                            imageUris = response.images.map { Uri.fromFile(it) }
+                            imageUris = response.images.map { Uri.fromFile(it) },
+                            places = response.places,
+                            placesMap = response.placesMap?.let { Uri.fromFile(it) }
                         ),
                         isSending = false,
                         streamingText = "",

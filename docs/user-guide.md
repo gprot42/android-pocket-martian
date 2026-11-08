@@ -75,6 +75,22 @@ switched on only when a question needs your position, starting while you type it
 **Settings → Location**, or deny the permission: chat works the same, you just name where
 you are. See [UK trains and transport](uk-trains.md) for how it's used.
 
+## Nearby places
+
+Ask for shops or places near you, such as "show me 3 local 7-11 stores" or "nearest pharmacy",
+and the answer comes with a map: you in the middle and a numbered pin for each place, with its
+address, distance and opening hours where OpenStreetMap has them.
+
+- Tap the map to open it full screen and move around; tap a row to open it at that place.
+- **Directions → Walking route** draws the walk on the map, with its distance and time.
+  **Google Maps** opens walking directions there, and **Another map app** opens the place in
+  one you have, such as OsmAnd or Organic Maps.
+- Distances are in a straight line, and walking times are estimated from them.
+- Say how many you want (up to 10); the default is 3. Name somewhere else ("near Leicester
+  Square") to search there instead of where you are.
+- Places come from [OpenStreetMap](https://www.openstreetmap.org), so a shop that isn't mapped
+  there won't appear.
+
 ## Costs and usage
 
 - **Show cost per query** (**Settings → Model & replies**) shows each answer's estimated cost.
