@@ -33,10 +33,18 @@ class ResponsesRequestJsonTest {
     }
 
     @Test
+    fun priorityUsesTheDocumentedServiceTierField() {
+        val body = json(ResponsesRequest(input = listOf(InputMessage(role = "user", content = "hi")), serviceTier = "priority"))
+        assertTrue(body, body.contains("\"service_tier\":\"priority\""))
+        assertEquals("priority", gson.fromJson("{\"service_tier\":\"priority\"}", ResponsesResponse::class.java).serviceTier)
+    }
+
+    @Test
     fun tuningFieldsAreOmittedWhenUnset() {
         val body = json(ResponsesRequest(input = listOf(InputMessage(role = "user", content = "hi"))))
         assertFalse(body, body.contains("reasoning"))
         assertFalse(body, body.contains("max_turns"))
+        assertFalse(body, body.contains("service_tier"))
     }
 
     @Test

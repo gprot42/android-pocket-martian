@@ -55,5 +55,26 @@ object AppDefaults {
      */
     const val IMAGE_COST_USD = 0.04
 
+    /**
+     * Priority processing (the API's service_tier "priority"): xAI schedules the request
+     * ahead of standard traffic, at twice the price of every token, charged only when the
+     * reply confirms it was served at priority. A SuperGrok or SuperGrok Heavy plan does
+     * not include it; it is a choice made per request and paid from API credits.
+     *
+     * [PRIORITY_WHEN_BUSY], the default, sends at the standard price and asks for priority
+     * only on the retry after xAI answers "the model is currently at capacity", which used
+     * to end the prompt with that error.
+     */
+    const val PRIORITY_OFF = "off"
+    const val PRIORITY_WHEN_BUSY = "busy"
+    const val PRIORITY_ALWAYS = "always"
+    const val PRIORITY_PRICE_MULTIPLIER = 2.0
+
+    fun normalizePriority(value: String?): String =
+        when (value) {
+            PRIORITY_OFF, PRIORITY_ALWAYS -> value
+            else -> PRIORITY_WHEN_BUSY
+        }
+
     const val FRAMEWORK = "Jetpack Compose + Material3, Hilt, Retrofit/OkHttp, DataStore"
 }

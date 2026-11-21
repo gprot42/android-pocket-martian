@@ -345,6 +345,7 @@ fun ChatScreen(
     fun resendLastPrompt() {
         val last = uiState.lastSentPrompt
         if (last.isNotBlank() && !uiState.isSending) {
+            viewModel.dropFailedPrompt(last)
             viewModel.updatePrompt(last)
             sendWithOptionalLocationPermission()
         }

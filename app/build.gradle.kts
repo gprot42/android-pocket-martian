@@ -20,8 +20,8 @@ android {
         applicationId = "com.pocketmartian.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 50
-        versionName = "0.0.50"
+        versionCode = 51
+        versionName = "0.0.51"
 
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm 'UTC'", Locale.US)
             .apply { timeZone = TimeZone.getTimeZone("UTC") }

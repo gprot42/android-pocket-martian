@@ -521,6 +521,35 @@ internal fun ColumnScope.ChatSettings(
                     ) { Text(label) }
                 }
         }
+        Spacer(Modifier.height(12.dp))
+        SectionLabel("Priority processing")
+        val priorities = listOf(
+            "Off" to AppDefaults.PRIORITY_OFF,
+            "When busy" to AppDefaults.PRIORITY_WHEN_BUSY,
+            "Always" to AppDefaults.PRIORITY_ALWAYS
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            priorities.forEachIndexed { index, (label, value) ->
+                SegmentedButton(
+                    selected = uiState.priority == value,
+                    onClick = { viewModel.updatePriority(value) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = priorities.size)
+                ) { Text(label, maxLines = 1) }
+            }
+        }
+        Text(
+            when (uiState.priority) {
+                AppDefaults.PRIORITY_OFF ->
+                    "Never. When Grok is at capacity, you wait and try again."
+                AppDefaults.PRIORITY_ALWAYS ->
+                    "Every prompt jumps xAI's queue, at twice the token price when it's served at priority."
+                else ->
+                    "Prompts go at the normal price. When Grok is at capacity, the retry jumps " +
+                        "xAI's queue, at twice the price for that answer."
+            } + " Paid from API credits; SuperGrok plans don't include it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
         SettingsToggleRow(
             title = "Create images",
@@ -1112,7 +1141,8 @@ private fun chatSummary(uiState: SettingsUiState): String {
     val format = if (uiState.responseFormat == "markdown") "Markdown" else "HTML"
     val cost = if (uiState.showCost) " · cost on" else ""
     val images = if (uiState.imagesEnabled) "" else " · images off"
-    return "Grok $model · $format$images$cost"
+    val priority = if (uiState.priority == AppDefaults.PRIORITY_ALWAYS) " · priority" else ""
+    return "Grok $model · $format$images$priority$cost"
 }
 
 private fun voiceSummary(uiState: SettingsUiState): String {

@@ -91,7 +91,7 @@ internal fun isUnknownModelFailure(code: Int, body: String): Boolean {
 internal fun isUnsupportedParameterFailure(code: Int, body: String): Boolean {
     if (code != 400 && code != 422) return false
     val lower = body.lowercase()
-    val mentionsOurFields = listOf("reasoning", "max_turns", "maxturns", "effort")
+    val mentionsOurFields = listOf("reasoning", "max_turns", "maxturns", "effort", "service_tier", "priority")
         .any { it in lower }
     if (!mentionsOurFields) return false
     return listOf(
@@ -105,6 +105,37 @@ internal fun isUnsupportedParameterFailure(code: Int, body: String): Boolean {
         "not permitted",
         "invalid"
     ).any { it in lower }
+}
+
+/**
+ * xAI turned the request away because the model is full: "The model is currently at
+ * capacity due to high demand". It arrives as an error event inside a reply that began
+ * normally, not as an HTTP status, so it was neither retried nor recognised, and the
+ * prompt ended with the raw text behind "RuntimeException:". Nothing was generated, so
+ * sending it again cannot pay twice.
+ */
+internal class ModelBusyException(message: String, val priorityTried: Boolean = false) : RuntimeException(message)
+
+/** Whether an error text from xAI means the model is full rather than the request wrong. */
+internal fun looksLikeCapacityFailure(text: String): Boolean {
+    val lower = text.lowercase()
+    return listOf("at capacity", "high demand", "overloaded", "capacity exceeded").any { it in lower }
+}
+
+/**
+ * HTTP statuses that mean the model is full, as opposed to broken. Not 429: that is this
+ * team's own rate limit, which priority doesn't lift.
+ */
+internal fun isBusyHttpStatus(code: Int): Boolean = code == 503 || code == 529
+
+/** What to tell the user when Grok stayed full through every retry. */
+internal fun modelBusyMessage(priorityTried: Boolean, priority: String): String = buildString {
+    append("Grok is busy: xAI says the model is at capacity right now.")
+    if (priorityTried) append(" It was still full with priority processing.")
+    append(" Try again in a minute, or pick the other model in Settings \u2192 Model & replies.")
+    if (priority == com.pocketmartian.app.AppDefaults.PRIORITY_OFF) {
+        append(" Priority processing (Settings \u2192 Model & replies) can jump the queue when this happens, at twice the price.")
+    }
 }
 
 /**

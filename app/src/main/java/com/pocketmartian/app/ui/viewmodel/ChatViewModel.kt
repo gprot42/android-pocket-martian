@@ -29,6 +29,7 @@ import com.pocketmartian.app.data.repository.SendTiming
 import com.pocketmartian.app.data.repository.htmlToHistoryText
 import com.pocketmartian.app.data.repository.SpeechToTextRepository
 import com.pocketmartian.app.data.repository.appendDictation
+import com.pocketmartian.app.data.repository.answerHtml
 import com.pocketmartian.app.data.repository.wantsFreshLocation
 import com.pocketmartian.app.data.repository.SuperGrokAuthRepository
 import com.pocketmartian.app.data.share.IncomingShare
@@ -101,7 +102,7 @@ internal fun trimHistory(
     maxChars: Int = MAX_HISTORY_CHARS
 ): List<ChatUiMessage> {
     var assistantCount = 0
-    val recent = messages.reversed()
+    val recent = withoutUnanswered(messages).reversed()
         .takeWhile { msg ->
             if (msg.role == "assistant") assistantCount++
             assistantCount <= maxAssistantTurns
@@ -120,6 +121,35 @@ internal fun trimHistory(
     }
     return recent.subList(start, recent.size)
 }
+
+/**
+ * The conversation without prompts that never got an answer (the send failed). Left in,
+ * they reached the model as questions still waiting, and it answered them too: asked for
+ * the nearest 7-Eleven, Grok first explained Aurora Store, from a prompt whose send had
+ * failed earlier.
+ */
+internal fun withoutUnanswered(messages: List<ChatUiMessage>): List<ChatUiMessage> =
+    messages.filterIndexed { i, msg ->
+        msg.role != "user" || messages.getOrNull(i + 1)?.role == "assistant"
+    }
+
+/**
+ * The prompt a Retry is about to send again, when it is the last message and failed: it
+ * is taken off, so the retry replaces it rather than adding a copy under it. Not when it
+ * carried pictures, which the retry wouldn't send again.
+ */
+internal fun withoutFailedPrompt(messages: List<ChatUiMessage>, prompt: String): List<ChatUiMessage> {
+    val last = messages.lastOrNull() ?: return messages
+    return if (last.role == "user" && last.content == prompt && !last.hasImage) messages.dropLast(1) else messages
+}
+
+/** An answer cut off by a dropped connection, in the reply format, with a note saying so. */
+internal fun incompleteAnswer(partial: String, responseFormat: String): String =
+    if (responseFormat == "markdown") {
+        "$partial\n\n_The connection dropped here, so this answer is incomplete._"
+    } else {
+        answerHtml(partial) + "<p><em>The connection dropped here, so this answer is incomplete.</em></p>"
+    }
 
 /** Per-1M-token prices (input, output) for known chat models. */
 private fun costRatesPerMillion(model: String): Pair<Double, Double> = when (model) {
@@ -756,6 +786,7 @@ class ChatViewModel @Inject constructor(
             val debugMode = settingsRepository.debugMode.first()
             val chatModel = settingsRepository.chatModel.first()
             val imagesEnabled = settingsRepository.imagesEnabled.first()
+            val priority = settingsRepository.priority.first()
 
             // Recent turns only, within a character budget (see trimHistory). The turns
             // are chosen on their stored text, then past answers go as plain words: the
@@ -816,6 +847,7 @@ class ChatViewModel @Inject constructor(
                 locationContext = location?.toInstructionSnippet(),
                 placesOrigin = location?.let { PlaceOrigin(it.latitude, it.longitude) },
                 imagesEnabled = imagesEnabled,
+                priority = priority,
                 previousImagesBase64 = previousImages,
                 onProgress = { progress ->
                     // Progress arrives on a network thread while the main thread also
@@ -875,8 +907,10 @@ class ChatViewModel @Inject constructor(
                 onSuccess = { response ->
                     val costInfo = response.usage?.let { usage ->
                         val (inPerM, outPerM) = costRatesPerMillion(chatModel)
-                        val cost = usage.prompt_tokens * (inPerM / 1_000_000.0) +
-                                usage.completion_tokens * (outPerM / 1_000_000.0) +
+                        // Priority doubles every token, not the pictures.
+                        val tier = if (response.servedPriority) AppDefaults.PRIORITY_PRICE_MULTIPLIER else 1.0
+                        val cost = tier * (usage.prompt_tokens * (inPerM / 1_000_000.0) +
+                                usage.completion_tokens * (outPerM / 1_000_000.0)) +
                                 response.images.size * AppDefaults.IMAGE_COST_USD
                         CostInfo(
                             promptTokens = usage.prompt_tokens,
@@ -907,7 +941,20 @@ class ChatViewModel @Inject constructor(
                     )
                 },
                 onFailure = { error ->
+                    // Part of the answer arrived before the connection broke: keep it,
+                    // marked as cut short, rather than wiping what was already read.
+                    val partial = synchronized(streamed) { streamed.toString() }.trim()
+                    val kept = if (partial.isEmpty()) {
+                        _uiState.value.messages
+                    } else {
+                        _uiState.value.messages + ChatUiMessage(
+                            role = "assistant",
+                            content = incompleteAnswer(partial, _uiState.value.responseFormat),
+                            model = chatModel
+                        )
+                    }
                     _uiState.value.copy(
+                        messages = kept,
                         isSending = false,
                         streamingText = "",
                         streamingStatus = null,
@@ -1043,6 +1090,12 @@ class ChatViewModel @Inject constructor(
         // Clear means clear: the saved copy goes too, not just the one on screen.
         saveJob?.cancel()
         viewModelScope.launch { transcriptStore.clear() }
+    }
+
+    /** Before Retry sends [prompt] again: take off its failed copy; see [withoutFailedPrompt]. */
+    fun dropFailedPrompt(prompt: String) {
+        if (_uiState.value.isSending) return
+        _uiState.value = _uiState.value.copy(messages = withoutFailedPrompt(_uiState.value.messages, prompt))
     }
 
     fun clearPrompt() {

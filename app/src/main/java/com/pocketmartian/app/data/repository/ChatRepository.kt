@@ -2,6 +2,7 @@ package com.pocketmartian.app.data.repository
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.util.Log
 import com.google.gson.GsonBuilder
@@ -48,6 +49,7 @@ import java.io.Reader
 import java.net.UnknownHostException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -84,6 +86,16 @@ internal class StreamBrokeAfterData(cause: Throwable) :
     IOException("Stream dropped part-way through: ${cause.message}", cause)
 
 /**
+ * The stream broke after the request was under way but before a word of the answer had
+ * arrived: Grok was still thinking or searching. Sent again once ([MAX_DROPPED_RETRIES]).
+ * The thinking done so far may be charged twice, but the alternative was the user tapping
+ * Retry, which costs the same: on a phone on a VPN one prompt failed this way four times
+ * running, each tap adding another copy of the question.
+ */
+internal class DroppedBeforeAnswer(cause: Throwable) :
+    IOException("Stream dropped before the answer began: ${cause.message}", cause)
+
+/**
  * Live progress while a reply is being produced. The request already streams; without
  * surfacing it the user watches a motionless indicator through search, reasoning and
  * generation, then everything appears at once.
@@ -113,7 +125,9 @@ data class ChatResult(
     /** Places Grok looked up for this answer, shown under it on a map. */
     val places: PlacesResult? = null,
     /** The map of [places] as a picture; null when it couldn't be drawn (offline). */
-    val placesMap: java.io.File? = null
+    val placesMap: java.io.File? = null,
+    /** Served at priority processing, which xAI charges at twice the token price. */
+    val servedPriority: Boolean = false
 )
 
 /** Result of a lightweight GET /v1/models auth probe. */
@@ -142,6 +156,63 @@ class ChatRepository @Inject constructor(
     private val warmupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val warmupInFlight = AtomicBoolean(false)
     private val lastWarmupMs = AtomicLong(0L)
+    private val currentNetwork = AtomicReference<Network?>(null)
+
+    init {
+        // When the phone changes network (Wi-Fi to mobile, or a VPN reconnecting), pooled
+        // connections to api.x.ai belong to the old one. OkHttp reuses them until a request
+        // fails on them, so the next prompt, and a Retry straight after, broke at once with
+        // "Connection to api.x.ai dropped". They are closed as soon as the network changes.
+        runCatching {
+            context.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(
+                object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) = networkChanged(network)
+                    override fun onLost(network: Network) = networkChanged(null)
+                }
+            )
+        }.onFailure { Log.w(TAG, "Couldn't watch network changes: ${it.message}") }
+    }
+
+    private fun networkChanged(network: Network?) {
+        val previous = currentNetwork.getAndSet(network)
+        if (previous != null && previous != network) {
+            Log.i(TAG, "Network changed; closing pooled connections")
+            releaseDeadConnections()
+        }
+    }
+
+    /** Close pooled connections that aren't carrying a reply, so the next request opens a fresh one. */
+    private fun releaseDeadConnections() {
+        runCatching { okHttpClient.connectionPool.evictAll() }
+    }
+
+    /**
+     * Whether the phone has a network that reaches the internet. A VPN's network often
+     * isn't marked validated even when it works, so a VPN counts as long as it says it
+     * has internet.
+     */
+    private fun hasUsableNetwork(): Boolean = try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        cm == null || (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)))
+    } catch (_: Exception) {
+        true
+    }
+
+    /**
+     * Before sending again after a failure: open fresh connections, and if the network is
+     * down (a VPN reconnecting, a lift, a hand-over), wait for it to come back, up to
+     * [NETWORK_WAIT_MS], rather than spending the retry on a connection that can't work.
+     */
+    private suspend fun prepareRetry(onProgress: ((ChatProgress) -> Unit)?) {
+        releaseDeadConnections()
+        if (hasUsableNetwork()) return
+        onProgress?.invoke(ChatProgress.Status(WAITING_FOR_NETWORK_STATUS))
+        val deadline = System.currentTimeMillis() + NETWORK_WAIT_MS
+        while (!hasUsableNetwork() && System.currentTimeMillis() < deadline) delay(500)
+    }
 
     /**
      * Pre-resolve DNS and open (or refresh) the pooled HTTP/2 + TLS connection to
@@ -256,6 +327,8 @@ class ChatRepository @Inject constructor(
         locationContext: String? = null,
         /** Where "near me" is, for the find_places tool; null when location is unknown. */
         placesOrigin: PlaceOrigin? = null,
+        /** When to ask for priority processing; see [AppDefaults.PRIORITY_WHEN_BUSY]. */
+        priority: String = AppDefaults.PRIORITY_WHEN_BUSY,
         /** Let Grok make and edit pictures with Grok Imagine when the prompt calls for it. */
         imagesEnabled: Boolean = true,
         /**
@@ -446,8 +519,10 @@ class ChatRepository @Inject constructor(
                 },
                 // Streaming is required for agent tools: web_search/reasoning can sit
                 // silent for minutes; SSE events (and HTTP/2 pings) keep the socket alive.
-                stream = true
+                stream = true,
+                serviceTier = if (priority == AppDefaults.PRIORITY_ALWAYS) PRIORITY_TIER else null
             )
+            val upgradeWhenBusy = priority == AppDefaults.PRIORITY_WHEN_BUSY
 
             if (debugMode) {
                 // Never keep raw image bytes in the debug log — a single 1024px JPEG
@@ -466,6 +541,7 @@ class ChatRepository @Inject constructor(
                 note("effort", request.reasoning?.effort ?: "default")
                 note("turns", request.maxTurns)
                 note("rail", if (transitEnquiry) "yes" else "no")
+                note("priority", priority)
                 note("prompt", text.length)
                 note("images", imageBase64List.size)
                 if (earlier.isNotEmpty()) note("earlier images", earlier.size)
@@ -473,10 +549,10 @@ class ChatRepository @Inject constructor(
             }
 
             var call = try {
-                executeResponses(apiKey, request, debugMode, onProgress, timing)
+                executeResponses(apiKey, request, debugMode, onProgress, timing, upgradeWhenBusy)
             } catch (e: HttpException) {
                 val body = try { e.response()?.errorBody()?.string().orEmpty() } catch (_: Throwable) { "" }
-                if ((request.reasoning != null || request.maxTurns != null) &&
+                if ((request.reasoning != null || request.maxTurns != null || request.serviceTier != null) &&
                     isUnsupportedParameterFailure(e.code(), body)
                 ) {
                     // The API rejected a tuning field, not the prompt. Retry plainly so a
@@ -489,7 +565,7 @@ class ChatRepository @Inject constructor(
                         )
                     }
                     onProgress?.invoke(ChatProgress.Restarted)
-                    request = request.copy(reasoning = null, maxTurns = null)
+                    request = request.copy(reasoning = null, maxTurns = null, serviceTier = null)
                     timing?.note("effort", "default (low rejected)")
                     executeResponses(apiKey, request, debugMode, onProgress, timing)
                 } else if (request.model != AppDefaults.BACKUP_MODEL &&
@@ -504,7 +580,7 @@ class ChatRepository @Inject constructor(
                     onProgress?.invoke(ChatProgress.Restarted)
                     request = request.copy(model = AppDefaults.BACKUP_MODEL)
                     timing?.note("model", "${request.model} (fallback)")
-                    executeResponses(apiKey, request, debugMode, onProgress, timing)
+                    executeResponses(apiKey, request, debugMode, onProgress, timing, upgradeWhenBusy)
                 } else {
                     Log.e(TAG, "HTTP ERROR ${e.code()}: ${body.take(2000)}")
                     if (debugMode) {
@@ -518,6 +594,8 @@ class ChatRepository @Inject constructor(
                     )
                 }
             }
+            // A retry that went at priority stays there for the rest of this answer.
+            request = request.copy(serviceTier = call.serviceTier)
             // Grok asked for live train times or nearby places: fetch them, hand them back,
             // let it carry on.
             // The request is resent whole with the calls and results appended, because
@@ -527,6 +605,7 @@ class ChatRepository @Inject constructor(
             var searchedWeb = call.usedWebSearch
             val usages = mutableListOf<ResponsesUsage>()
             call.response?.usage?.let { usages += it }
+            var servedPriority = call.response?.serviceTier == PRIORITY_TIER
             var rounds = 0
             // The last places found are the ones the answer talks about.
             var foundPlaces: PlacesResult? = null
@@ -541,7 +620,9 @@ class ChatRepository @Inject constructor(
                     )
                 }
                 request = request.copy(input = request.input + call.functionCalls + outputs)
-                call = executeResponses(apiKey, request, debugMode, onProgress, timing)
+                call = executeResponses(apiKey, request, debugMode, onProgress, timing, upgradeWhenBusy)
+                request = request.copy(serviceTier = call.serviceTier)
+                servedPriority = servedPriority || call.response?.serviceTier == PRIORITY_TIER
                 allCitations += call.citations
                 madeImages += call.images
                 searchedWeb = searchedWeb || call.usedWebSearch
@@ -582,6 +663,7 @@ class ChatRepository @Inject constructor(
                 timing?.note("tokens.out", usages.sumOf { it.outputTokens })
                 timing?.note("tokens.reasoning", usages.sumOf { it.outputDetails?.reasoningTokens ?: 0 }.takeIf { it > 0 })
             }
+            if (servedPriority) timing?.note("tier", PRIORITY_TIER)
 
             val usage = usages.takeIf { it.isNotEmpty() }?.let { all ->
                 val inTokens = all.sumOf { it.inputTokens }
@@ -607,7 +689,8 @@ class ChatRepository @Inject constructor(
                     citations = citations,
                     images = imageFiles,
                     places = foundPlaces,
-                    placesMap = placesMap
+                    placesMap = placesMap,
+                    servedPriority = servedPriority
                 )
             )
         } catch (e: CancellationException) {
@@ -622,7 +705,15 @@ class ChatRepository @Inject constructor(
                     body = body.take(2000)
                 )
             }
-            Result.failure(RuntimeException(friendlyHttpError(e.code(), body, e.message())))
+            Result.failure(
+                RuntimeException(
+                    if (looksLikeCapacityFailure(body)) {
+                        modelBusyMessage(priorityTried = false, priority = priority)
+                    } else {
+                        friendlyHttpError(e.code(), body, e.message())
+                    }
+                )
+            )
         } catch (e: Exception) {
             // Stopped: the closed body surfaces here as an IOException, not as cancellation.
             currentCoroutineContext().ensureActive()
@@ -637,6 +728,8 @@ class ChatRepository @Inject constructor(
                 )
             }
             when {
+                e is ModelBusyException ->
+                    Result.failure(RuntimeException(modelBusyMessage(e.priorityTried, priority)))
                 isTimeoutFailure(e) ->
                     Result.failure(
                         RuntimeException(
@@ -657,7 +750,7 @@ class ChatRepository @Inject constructor(
                     }
                     Result.failure(
                         RuntimeException(
-                            if (isTransientConnectFailure(e) && e.causeChain().none { it is StreamBrokeAfterData }) {
+                            if (isTransientConnectFailure(e) && e.causeChain().none { it is StreamBrokeAfterData || it is DroppedBeforeAnswer }) {
                                 "Couldn't reach api.x.ai ($cause)$how.$vpn"
                             } else {
                                 "Connection to api.x.ai dropped ($cause)$how.$vpn"
@@ -677,7 +770,9 @@ class ChatRepository @Inject constructor(
         val citations: List<String>,
         val usedWebSearch: Boolean,
         val functionCalls: List<FunctionCallItem> = emptyList(),
-        val images: List<GeneratedImageData> = emptyList()
+        val images: List<GeneratedImageData> = emptyList(),
+        /** The service_tier the successful attempt was sent with. */
+        val serviceTier: String? = null
     )
 
     /**
@@ -692,16 +787,45 @@ class ChatRepository @Inject constructor(
         request: ResponsesRequest,
         debugMode: Boolean,
         onProgress: ((ChatProgress) -> Unit)? = null,
-        timing: SendTiming? = null
+        timing: SendTiming? = null,
+        /** Retry at priority when xAI says the model is full; see [AppDefaults.PRIORITY_WHEN_BUSY]. */
+        upgradeWhenBusy: Boolean = false
     ): ResponsesCallResult {
         var attempt = 0
+        var busyAttempts = 0
+        var droppedRetries = 0
+        var sent = request
+        // The model is full: wait, and go at priority if allowed. Nothing was generated.
+        suspend fun retryBusy(reason: String) {
+            val upgrade = upgradeWhenBusy && sent.serviceTier != PRIORITY_TIER
+            if (upgrade) sent = sent.copy(serviceTier = PRIORITY_TIER)
+            val wait = BUSY_RETRY_WAITS_MS[(busyAttempts - 1).coerceAtMost(BUSY_RETRY_WAITS_MS.lastIndex)]
+            logRetry(debugMode, busyAttempts, MAX_BUSY_ATTEMPTS, wait, reason, timing)
+            onProgress?.invoke(ChatProgress.Restarted)
+            onProgress?.invoke(ChatProgress.Status(if (sent.serviceTier == PRIORITY_TIER) BUSY_PRIORITY_STATUS else BUSY_STATUS))
+            delay(wait)
+        }
         while (true) {
             attempt++
             try {
-                return readResponses(apiKey, request, debugMode, onProgress, timing)
+                return readResponses(apiKey, sent, debugMode, onProgress, timing).copy(serviceTier = sent.serviceTier)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: ModelBusyException) {
+                busyAttempts++
+                if (busyAttempts >= MAX_BUSY_ATTEMPTS) {
+                    throw ModelBusyException(e.message.orEmpty(), priorityTried = sent.serviceTier == PRIORITY_TIER)
+                }
+                retryBusy("busy: ${e.message}")
             } catch (e: HttpException) {
+                if (isBusyHttpStatus(e.code())) {
+                    busyAttempts++
+                    if (busyAttempts >= MAX_BUSY_ATTEMPTS) {
+                        throw ModelBusyException("HTTP ${e.code()}", priorityTried = sent.serviceTier == PRIORITY_TIER)
+                    }
+                    retryBusy("HTTP ${e.code()} ${e.message()}")
+                    continue
+                }
                 val canRetry = attempt < MAX_RESPONSES_ATTEMPTS && isRetryableHttpStatus(e.code())
                 if (!canRetry) throw e
                 val retryAfter = e.response()?.headers()?.get("Retry-After")
@@ -709,6 +833,14 @@ class ChatRepository @Inject constructor(
                 logRetry(debugMode, attempt, MAX_RESPONSES_ATTEMPTS, wait, "HTTP ${e.code()} ${e.message()}", timing)
                 onProgress?.invoke(ChatProgress.Restarted)
                 delay(wait)
+            } catch (e: DroppedBeforeAnswer) {
+                currentCoroutineContext().ensureActive()
+                if (++droppedRetries > MAX_DROPPED_RETRIES) throw e
+                logRetry(debugMode, droppedRetries, MAX_DROPPED_RETRIES + 1, 0, "dropped before the answer: ${e.cause?.message}", timing)
+                onProgress?.invoke(ChatProgress.Restarted)
+                onProgress?.invoke(ChatProgress.Status(DROPPED_STATUS))
+                prepareRetry(onProgress)
+                delay(DROPPED_RETRY_WAIT_MS)
             } catch (e: Exception) {
                 // A send that was stopped must not come back as "Retrying…".
                 currentCoroutineContext().ensureActive()
@@ -725,6 +857,7 @@ class ChatRepository @Inject constructor(
                 }
                 logRetry(debugMode, attempt, limit, wait, "${e.javaClass.simpleName}: ${e.message}", timing)
                 onProgress?.invoke(ChatProgress.Restarted)
+                prepareRetry(onProgress)
                 delay(wait)
             }
         }
@@ -866,12 +999,16 @@ class ChatRepository @Inject constructor(
                 )
             }
             val counting = CountingReader(rb.charStream())
+            // Whether any of the answer (or a picture) has started: until then a drop
+            // costs only thinking, and is worth one more try.
+            val answerStarted = AtomicBoolean(false)
             val listener = object : ResponsesStreamListener {
                 override fun onSearchStarted() {
                     onProgress?.invoke(ChatProgress.Searching)
                 }
 
                 override fun onDelta(text: String) {
+                    answerStarted.set(true)
                     timing?.mark(SendTiming.Mark.FIRST_TEXT)
                     onProgress?.invoke(ChatProgress.Delta(text))
                 }
@@ -885,6 +1022,7 @@ class ChatRepository @Inject constructor(
                 }
 
                 override fun onImageStarted() {
+                    answerStarted.set(true)
                     onProgress?.invoke(ChatProgress.Status(IMAGE_STATUS))
                 }
             }
@@ -896,6 +1034,7 @@ class ChatRepository @Inject constructor(
                 if (counting.charsRead == 0L && isStreamInterruption(e)) {
                     throw EarlyStreamFailure(e)
                 }
+                if (!answerStarted.get() && isStreamInterruption(e)) throw DroppedBeforeAnswer(e)
                 // Part of the answer had already arrived, so the request ran (searches
                 // and all) and is being billed. Sending it again would pay twice and
                 // throw away what was shown; see StreamBrokeAfterData.
@@ -903,6 +1042,10 @@ class ChatRepository @Inject constructor(
                 throw e
             }
             if (parsed.errorMessage != null) {
+                // Turned away before any of the answer was written: safe to send again.
+                if (looksLikeCapacityFailure(parsed.errorMessage) && parsed.accumulatedText.isBlank()) {
+                    throw ModelBusyException(parsed.errorMessage)
+                }
                 throw RuntimeException(parsed.errorMessage)
             }
             if (parsed.completed == null && parsed.accumulatedText.isBlank()) {
@@ -1111,6 +1254,21 @@ internal val TRAIN_TOOLS = listOf(
         )
     )
 )
+
+/** One more try for a stream that broke before the answer began; see [DroppedBeforeAnswer]. */
+internal const val MAX_DROPPED_RETRIES = 1
+internal const val DROPPED_RETRY_WAIT_MS = 1_000L
+/** The longest a retry waits for the network to come back. */
+internal const val NETWORK_WAIT_MS = 20_000L
+internal const val DROPPED_STATUS = "Connection dropped; trying again\u2026"
+internal const val WAITING_FOR_NETWORK_STATUS = "Waiting for the connection\u2026"
+
+internal const val PRIORITY_TIER = "priority"
+/** Tries in all when the model is full, and the waits between them. */
+internal const val MAX_BUSY_ATTEMPTS = 3
+internal val BUSY_RETRY_WAITS_MS = listOf(2_000L, 5_000L)
+internal const val BUSY_STATUS = "Grok is busy; trying again\u2026"
+internal const val BUSY_PRIORITY_STATUS = "Grok is busy; trying again with priority\u2026"
 
 internal const val PLACES_TOOL_NAME = "find_places"
 private const val DEFAULT_PLACES = 3

@@ -99,6 +99,11 @@ address, distance and opening hours where OpenStreetMap has them.
   Management Keys**, create one, paste it under **Settings → Management key**, then
   open **Credits & usage** and tap **Refresh**.
 - SuperGrok usage can't be read by an app; check it in the official Grok app.
+- **Priority processing** (**Settings → Model & replies**) decides what happens when xAI says
+  Grok is at capacity. **When busy** (the default) sends prompts at the normal price and, if Grok
+  is full, tries again at priority, which xAI charges at twice the token price for that answer.
+  **Always** sends every prompt at priority; **Off** never does. It's paid from API credits:
+  SuperGrok and SuperGrok Heavy plans don't include it.
 
 ## Updates
 

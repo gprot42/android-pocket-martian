@@ -49,6 +49,7 @@ class SettingsRepository @Inject constructor(
     private val THEME_KEY = stringPreferencesKey("theme")
     private val SHOW_COST_KEY = booleanPreferencesKey("show_cost")
     private val IMAGES_ENABLED_KEY = booleanPreferencesKey("images_enabled")
+    private val PRIORITY_KEY = stringPreferencesKey("priority_processing")
     private val DEBUG_MODE_KEY = booleanPreferencesKey("debug_mode")
     private val RESPONSE_FORMAT_KEY = stringPreferencesKey("response_format")
     private val FONT_SIZE_KEY = floatPreferencesKey("font_size")
@@ -124,6 +125,10 @@ class SettingsRepository @Inject constructor(
     /** Whether Grok may make and edit pictures (Grok Imagine). On unless turned off. */
     val imagesEnabled: Flow<Boolean> = context.dataStore.data
         .map { preferences -> preferences[IMAGES_ENABLED_KEY] ?: true }
+
+    /** When to ask xAI for priority processing; see [AppDefaults.PRIORITY_WHEN_BUSY]. */
+    val priority: Flow<String> = context.dataStore.data
+        .map { preferences -> AppDefaults.normalizePriority(preferences[PRIORITY_KEY]) }
 
     /** Look for a newer release on GitHub when the app opens (at most daily). On by default. */
     val autoUpdateCheck: Flow<Boolean> = context.dataStore.data
@@ -291,6 +296,10 @@ class SettingsRepository @Inject constructor(
 
     suspend fun saveImagesEnabled(enabled: Boolean) {
         context.dataStore.edit { it[IMAGES_ENABLED_KEY] = enabled }
+    }
+
+    suspend fun savePriority(priority: String) {
+        context.dataStore.edit { it[PRIORITY_KEY] = AppDefaults.normalizePriority(priority) }
     }
 
     suspend fun saveShowCost(show: Boolean) {

@@ -1,5 +1,6 @@
 package com.pocketmartian.app.data.repository
 
+import com.pocketmartian.app.AppDefaults
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -128,5 +129,50 @@ class NetworkFailuresTest {
     fun aReadTimeoutIsNotRetried() {
         // The model may have been working for minutes; the user decides whether to retry.
         assertFalse(isRetryableResponsesFailure(SocketTimeoutException("timeout")))
+    }
+
+    // --- the model being full ----------------------------------------------------------------
+
+    @Test
+    fun xaisCapacityMessageIsRecognised() {
+        assertTrue(
+            looksLikeCapacityFailure(
+                "The model is currently at capacity due to high demand. Please try again in a few minutes, " +
+                    "or use a higher service tier for priority processing: " +
+                    "https://docs.x.ai/developers/advanced-api-usage/priority-processing"
+            )
+        )
+        assertTrue(looksLikeCapacityFailure("Model overloaded"))
+        assertFalse(looksLikeCapacityFailure("Invalid API key"))
+        assertFalse(looksLikeCapacityFailure("Your team has exhausted its credits"))
+    }
+
+    @Test
+    fun onlyFullModelStatusesCountAsBusy() {
+        assertTrue(isBusyHttpStatus(503))
+        assertTrue(isBusyHttpStatus(529))
+        // The team's own rate limit: priority would not help.
+        assertFalse(isBusyHttpStatus(429))
+        assertFalse(isBusyHttpStatus(500))
+    }
+
+    @Test
+    fun theBusyMessageSaysWhatWasTriedWithoutAClassName() {
+        val tried = modelBusyMessage(priorityTried = true, priority = AppDefaults.PRIORITY_WHEN_BUSY)
+        assertTrue(tried, tried.startsWith("Grok is busy"))
+        assertTrue(tried, tried.contains("still full with priority"))
+        assertFalse(tried, tried.contains("Exception"))
+        assertFalse(tried, tried.contains("twice the price"))
+        // With priority off, the message points at the setting.
+        val off = modelBusyMessage(priorityTried = false, priority = AppDefaults.PRIORITY_OFF)
+        assertTrue(off, off.contains("Priority processing (Settings"))
+        assertFalse(off, off.contains("still full"))
+    }
+
+    @Test
+    fun unknownPrioritySettingsFallBackToWhenBusy() {
+        assertEquals(AppDefaults.PRIORITY_WHEN_BUSY, AppDefaults.normalizePriority(null))
+        assertEquals(AppDefaults.PRIORITY_WHEN_BUSY, AppDefaults.normalizePriority("sometimes"))
+        assertEquals(AppDefaults.PRIORITY_ALWAYS, AppDefaults.normalizePriority("always"))
     }
 }

@@ -56,6 +56,7 @@ data class SettingsUiState(
     val theme: AppTheme = AppTheme.DARK,
     val showCost: Boolean = false,
     val imagesEnabled: Boolean = true,
+    val priority: String = AppDefaults.PRIORITY_WHEN_BUSY,
     val debugMode: Boolean = false,
     val responseFormat: String = "html",
     val fontSize: Float = 14f,
@@ -141,6 +142,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.imagesEnabled.collect { on ->
                 _uiState.value = _uiState.value.copy(imagesEnabled = on)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.priority.collect { priority ->
+                _uiState.value = _uiState.value.copy(priority = priority)
             }
         }
         viewModelScope.launch {
@@ -511,6 +517,11 @@ class SettingsViewModel @Inject constructor(
     fun updateImagesEnabled(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(imagesEnabled = enabled, savedMessage = null)
         viewModelScope.launch { settingsRepository.saveImagesEnabled(enabled) }
+    }
+
+    fun updatePriority(priority: String) {
+        _uiState.value = _uiState.value.copy(priority = priority, savedMessage = null)
+        viewModelScope.launch { settingsRepository.savePriority(priority) }
     }
 
     fun updateShowCost(show: Boolean) {

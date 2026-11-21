@@ -34,7 +34,10 @@ data class ResponsesRequest(
      * Bounds the runaway case where the model keeps searching; null means no limit.
      */
     @SerializedName("max_turns")
-    val maxTurns: Int? = null
+    val maxTurns: Int? = null,
+    /** "priority" to be scheduled ahead of standard traffic; see [AppDefaults.PRIORITY_WHEN_BUSY]. */
+    @SerializedName("service_tier")
+    val serviceTier: String? = null
 )
 
 /** Reasoning effort for [ResponsesRequest]. See [AppDefaults.EFFORT_LOW] and friends. */
@@ -104,7 +107,10 @@ data class ResponsesResponse(
     @SerializedName("output_text")
     val outputText: String? = null,
     val usage: ResponsesUsage? = null,
-    val citations: List<JsonElement>? = null
+    val citations: List<JsonElement>? = null,
+    /** The tier the reply was actually served at; priority is charged only when this says so. */
+    @SerializedName("service_tier")
+    val serviceTier: String? = null
 )
 
 data class OutputItem(
