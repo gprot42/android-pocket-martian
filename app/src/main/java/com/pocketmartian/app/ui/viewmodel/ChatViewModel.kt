@@ -20,6 +20,7 @@ import com.pocketmartian.app.data.repository.GeneratedImages
 import com.pocketmartian.app.data.repository.ResolvedAuth
 import com.pocketmartian.app.data.local.ChatTranscriptStore
 import com.pocketmartian.app.data.local.StoredMessage
+import com.pocketmartian.app.service.AnswerKeepAliveService
 import com.pocketmartian.app.data.places.MapSnapshot
 import com.pocketmartian.app.data.places.PlaceOrigin
 import com.pocketmartian.app.data.places.PlacesResult
@@ -722,11 +723,15 @@ class ChatViewModel @Inject constructor(
             streamingStatus = "Thinking\u2026"
         )
 
+        // Not frozen by Android while the answer arrives, if the user switches apps.
+        AnswerKeepAliveService.start(context)
         sendJob = viewModelScope.launch {
             val timing = SendTiming()
             var timingRecorded = false
             coroutineContext[Job]?.invokeOnCompletion { cause ->
                 if (cause != null && !timingRecorded) requestTimingLog.record(timing.summary("stopped"))
+                // Once nothing is in flight. A queued prompt sent next starts it again.
+                if (!_uiState.value.isSending) AnswerKeepAliveService.stop(context)
             }
             // Only a prompt whose answer depends on where the phone is waits for a GPS
             // fix; anything else goes at once with whatever location is already known.

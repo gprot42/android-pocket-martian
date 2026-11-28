@@ -156,6 +156,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.pocketmartian.app.data.share.formatConversationForShare
 import com.pocketmartian.app.data.share.htmlToPlainText
+import com.pocketmartian.app.data.share.shareSubject
 import com.pocketmartian.app.data.share.startPlainTextShare
 import com.pocketmartian.app.ui.viewmodel.AttachedImage
 import com.pocketmartian.app.ui.viewmodel.ChatUiMessage
@@ -339,7 +340,8 @@ fun ChatScreen(
 
     fun shareConversation() {
         val text = formatConversationForShare(uiState.messages.map { it.role to shareableMessageText(it) })
-        startPlainTextShare(context, text, "Share conversation")
+        val first = uiState.messages.firstOrNull { it.role == "user" }?.content
+        startPlainTextShare(context, text, "Share conversation", shareSubject(first, "Conversation with Grok"))
     }
 
     fun resendLastPrompt() {
@@ -686,10 +688,15 @@ fun ChatScreen(
                                     composerFocus.requestFocus()
                                 },
                                 onShare = { msg ->
+                                    // The question this answer replied to, for the subject line.
+                                    val index = uiState.messages.indexOfFirst { it.id == msg.id }
+                                    val question = uiState.messages.take(index.coerceAtLeast(0))
+                                        .lastOrNull { it.role == "user" }?.content
                                     startPlainTextShare(
                                         context,
                                         shareableMessageText(msg),
-                                        "Share response"
+                                        "Share response",
+                                        shareSubject(question)
                                     )
                                 }
                             )

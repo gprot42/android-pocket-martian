@@ -33,10 +33,15 @@ fun Intent.toIncomingShare(context: Context): IncomingShare? {
     return parsed.copy(imageUris = persisted.map { it.toString() })
 }
 
-fun startPlainTextShare(context: Context, text: String, chooserTitle: String) {
+/**
+ * Offer text to other apps. [subject] becomes the subject line in email apps (see
+ * [shareSubject]); messengers ignore it.
+ */
+fun startPlainTextShare(context: Context, text: String, chooserTitle: String, subject: String? = null) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, text)
+        subject?.let { putExtra(Intent.EXTRA_SUBJECT, it) }
     }
     context.startActivity(Intent.createChooser(intent, chooserTitle))
 }

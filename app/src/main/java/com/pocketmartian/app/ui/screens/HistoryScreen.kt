@@ -46,6 +46,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.pocketmartian.app.data.repository.ResponseHistoryEntry
 import com.pocketmartian.app.data.share.htmlToPlainText
+import com.pocketmartian.app.data.share.shareSubject
 import com.pocketmartian.app.data.share.startPlainTextShare
 import com.pocketmartian.app.ui.viewmodel.HistoryViewModel
 import kotlin.math.ceil
@@ -145,7 +146,8 @@ private fun HistoryEntryCard(entry: ResponseHistoryEntry, index: Int) {
                     startPlainTextShare(
                         context,
                         htmlToPlainText(entry.response),
-                        "Share response"
+                        "Share response",
+                        shareSubject(entry.prompt)
                     )
                 }) { Text("Share") }
                 TextButton(onClick = { clipboard.setText(AnnotatedString(htmlToPlainText(entry.response))) }) {

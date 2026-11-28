@@ -741,10 +741,13 @@ class ChatRepository @Inject constructor(
                     Result.failure(RuntimeException(dnsFailureMessage("api.x.ai")))
                 isStreamInterruption(e) -> {
                     val tries = e.causeChain().filterIsInstance<ConnectAttemptsExhausted>().firstOrNull()?.attempts
-                    val cause = e.causeChain().last().javaClass.simpleName
+                    // The root cause's own words ("Software caused connection abort",
+                    // "Connection reset") say more than its class name alone.
+                    val root = e.causeChain().last()
+                    val cause = listOfNotNull(root.javaClass.simpleName, root.message?.take(80)).joinToString(": ")
                     val how = if (tries != null && tries > 1) " after $tries tries" else ""
                     val vpn = if (isVpnActive()) {
-                        " A VPN is on: if it was reconnecting, or does not route to api.x.ai, that is the likely cause."
+                        " A VPN is on; if this keeps happening, try once with it off to see whether it's the cause."
                     } else {
                         " Check signal and try again."
                     }

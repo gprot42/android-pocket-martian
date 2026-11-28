@@ -110,6 +110,27 @@ object IncomingShareParser {
     )
 }
 
+/**
+ * The subject line for a shared answer: "Grok: " and the question that was asked, on one
+ * line and short enough for an inbox. Shared to email, answers used to arrive with the
+ * subject empty. [question] null, blank or a picture's placeholder gives [fallback].
+ */
+fun shareSubject(question: String?, fallback: String = "Answer from Grok"): String {
+    val line = question.orEmpty().replace(Regex("\\s+"), " ").trim()
+    if (line.isEmpty() || Regex("^\\[(Image|\\d+ images)]$").matches(line)) return fallback
+    val text = if (line.length <= MAX_SUBJECT_QUESTION) {
+        line
+    } else {
+        // Cut at a word, not through one.
+        val cut = line.take(MAX_SUBJECT_QUESTION)
+        val atWord = cut.substringBeforeLast(' ')
+        (if (atWord.length >= MAX_SUBJECT_QUESTION / 2) atWord else cut).trimEnd() + "\u2026"
+    }
+    return "Grok: $text"
+}
+
+private const val MAX_SUBJECT_QUESTION = 72
+
 /** Format a chat transcript for ACTION_SEND. [content] should already be plain text. */
 fun formatConversationForShare(messages: List<Pair<String, String>>): String =
     messages.joinToString("\n\n") { (role, content) ->

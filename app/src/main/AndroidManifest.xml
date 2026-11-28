@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Offline pre-check before each send (ConnectivityManager.getActiveNetwork) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Keeps an answer arriving while you switch apps (AnswerKeepAliveService) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Optional GPS for local answers (weather, transit); user can disable in Settings -->
@@ -42,6 +44,11 @@
              ChatViewModels read the one share inbox, and the hidden one took the
              screenshot, so the screen in front showed nothing. One instance gets every
              share through onNewIntent. -->
+        <service
+            android:name=".service.AnswerKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
